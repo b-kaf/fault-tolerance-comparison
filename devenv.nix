@@ -22,6 +22,13 @@
   scripts.hello.exec = ''
     echo hello from $GREET
   '';
+  scripts.test-zig.exec = ''
+    zig build test
+  '';
+  scripts.test-c.exec = ''
+    cc -std=c11 -Wall -Wextra -pedantic -o /tmp/tmr_test c/tmr/tmr_test.c
+    /tmp/tmr_test
+  '';
 
   # https://devenv.sh/basics/
   enterShell = ''
