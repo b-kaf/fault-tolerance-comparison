@@ -58,4 +58,76 @@ pub fn build(b: *std.Build) void {
 
     test_step.dependOn(&run_tmr.step);
     test_step.dependOn(&run_c_tmr.step);
+
+    const mps2_an386 = b.resolveTargetQuery(.{
+        .cpu_arch = .thumb,
+        .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_m4 },
+        .os_tag = .freestanding,
+        .abi = .eabi,
+        .ofmt = .elf,
+    });
+
+    const harness_step = b.step(
+        "harness",
+        "Build QEMU mps2-an386 Cortex-M4 fault-injection harness firmware",
+    );
+
+    const harness_c_mod = b.createModule(.{
+        .target = mps2_an386,
+        .optimize = optimize,
+    });
+    harness_c_mod.addIncludePath(b.path("harness/common"));
+    harness_c_mod.addIncludePath(b.path("c/tmr"));
+    harness_c_mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
+    harness_c_mod.addCSourceFile(.{
+        .file = b.path("harness/c/tmr_harness.c"),
+        .flags = &.{
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-ffreestanding",
+            "-fno-builtin",
+        },
+    });
+
+    const harness_c = b.addExecutable(.{
+        .name = "tmr-harness-c-m4",
+        .root_module = harness_c_mod,
+    });
+    harness_c.entry = .{ .symbol_name = "Reset_Handler" };
+    harness_c.link_gc_sections = false;
+    harness_c.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
+
+    const tmr_import_mod = b.createModule(.{
+        .root_source_file = b.path("zig/tmr/tmr.zig"),
+        .target = mps2_an386,
+        .optimize = optimize,
+    });
+    const harness_zig_mod = b.createModule(.{
+        .root_source_file = b.path("harness/zig/tmr_harness.zig"),
+        .target = mps2_an386,
+        .optimize = optimize,
+    });
+    harness_zig_mod.addImport("tmr", tmr_import_mod);
+    harness_zig_mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
+
+    const harness_zig = b.addExecutable(.{
+        .name = "tmr-harness-zig-m4",
+        .root_module = harness_zig_mod,
+    });
+    harness_zig.entry = .{ .symbol_name = "Reset_Handler" };
+    harness_zig.link_gc_sections = false;
+    harness_zig.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
+
+    const install_harness_c = b.addInstallArtifact(harness_c, .{
+        .dest_dir = .{ .override = .{ .custom = "harness" } },
+        .dest_sub_path = "tmr-harness-c-m4.elf",
+    });
+    const install_harness_zig = b.addInstallArtifact(harness_zig, .{
+        .dest_dir = .{ .override = .{ .custom = "harness" } },
+        .dest_sub_path = "tmr-harness-zig-m4.elf",
+    });
+
+    harness_step.dependOn(&install_harness_c.step);
+    harness_step.dependOn(&install_harness_zig.step);
 }

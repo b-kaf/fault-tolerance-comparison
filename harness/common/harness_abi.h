@@ -1,0 +1,26 @@
+#ifndef HARNESS_ABI_H
+#define HARNESS_ABI_H
+
+#include <stdint.h>
+
+enum {
+    HARNESS_STAGE_BOOT = 0,
+    HARNESS_STAGE_AFTER_INIT = 1,
+    HARNESS_STAGE_BEFORE_READ = 2,
+    HARNESS_STAGE_AFTER_READ = 3,
+};
+
+enum {
+    HARNESS_FAULT_NONE = 0,
+    HARNESS_FAULT_COPY_A = 1,
+    HARNESS_FAULT_COPY_B = 2,
+    HARNESS_FAULT_COPY_C = 3,
+    HARNESS_FAULT_ALL_DISTINCT = 4,
+};
+
+enum {
+    HARNESS_STATUS_OK = 0,
+    HARNESS_STATUS_NO_MAJORITY = 1,
+};
+
+#endif

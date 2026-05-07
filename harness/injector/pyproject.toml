@@ -1,0 +1,9 @@
+[project]
+name = "injector"
+version = "0.1.0"
+description = "GDB RSP fault injector for the TMR QEMU harness"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pygdbmi>=0.11.0.0",
+]

@@ -6,6 +6,11 @@ devenv.local.yaml
 # direnv
 .direnv
 
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
 # pre-commit
 .pre-commit-config.yaml
 

@@ -29,6 +29,33 @@
     cc -std=c11 -Wall -Wextra -pedantic -o /tmp/tmr_test c/tmr/tmr_test.c
     /tmp/tmr_test
   '';
+  scripts.harness-build.exec = ''
+    zig build harness
+  '';
+  scripts.campaign-c.exec = ''
+    zig build harness
+    cd harness/injector
+    uv run python main.py \
+      --launch-qemu \
+      --port "''${TMR_CAMPAIGN_C_PORT:-1245}" \
+      --iterations "''${TMR_CAMPAIGN_ITERATIONS:-20}" \
+      --elf ../../zig-out/harness/tmr-harness-c-m4.elf \
+      "''${@}"
+  '';
+  scripts.campaign-zig.exec = ''
+    zig build harness
+    cd harness/injector
+    uv run python main.py \
+      --launch-qemu \
+      --port "''${TMR_CAMPAIGN_ZIG_PORT:-1246}" \
+      --iterations "''${TMR_CAMPAIGN_ITERATIONS:-20}" \
+      --elf ../../zig-out/harness/tmr-harness-zig-m4.elf \
+      "''${@}"
+  '';
+  scripts.campaign-all.exec = ''
+    campaign-c "''${@}"
+    campaign-zig "''${@}"
+  '';
 
   # https://devenv.sh/basics/
   enterShell = ''
