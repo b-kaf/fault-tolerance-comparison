@@ -32,7 +32,30 @@ pub fn build(b: *std.Build) void {
 
     const run_tmr = b.addRunArtifact(tmr_tests);
 
-    const test_step = b.step("test", "Run all zig tests");
+    const c_tmr_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    c_tmr_mod.addIncludePath(b.path("c/tmr"));
+    c_tmr_mod.addCSourceFile(.{
+        .file = b.path("c/tmr/tmr_test.c"),
+        .flags = &.{
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+        },
+    });
+
+    const c_tmr_tests = b.addExecutable(.{
+        .name = "c-tmr-tests",
+        .root_module = c_tmr_mod,
+    });
+
+    const run_c_tmr = b.addRunArtifact(c_tmr_tests);
+
+    const test_step = b.step("test", "Run all tests");
 
     test_step.dependOn(&run_tmr.step);
+    test_step.dependOn(&run_c_tmr.step);
 }

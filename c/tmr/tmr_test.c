@@ -1,0 +1,65 @@
+#include <stdio.h>
+#include <stdint.h>
+
+#include "tmr.h"
+
+static int g_failed = 0;
+static int g_total = 0;
+
+#define CHECK(expr) do {                                                       \
+    g_total += 1;                                                              \
+    if (!(expr)) {                                                             \
+        g_failed += 1;                                                         \
+        fprintf(stderr, "  FAIL: %s:%d: %s\n", __FILE__, __LINE__, #expr);     \
+    }                                                                          \
+} while (0)
+
+static void test_clean_read_returns_value(void) {
+    printf("Tmr: clean read returns value\n");
+    tmr_int_t t = tmr_int_init(42);
+    int val = 0;
+    tmr_status_t s = tmr_int_read(&t, &val);
+    CHECK(s == TMR_OK);
+    CHECK(val == 42);
+}
+
+static void test_single_fault_majority_wins(void) {
+    printf("Tmr: single fault — majority wins\n");
+    tmr_int_t t = tmr_int_init(100);
+    tmr_int_inject_fault_a(&t, 0xFF);
+    int val = 0;
+    tmr_status_t s = tmr_int_read(&t, &val); /* b==c==100, majority wins */
+    CHECK(s == TMR_OK);
+    CHECK(val == 100);
+    CHECK(t.fault_count == 1);
+}
+
+static void test_no_majority_error_returned(void) {
+    printf("Tmr: no majority — error returned\n");
+    tmr_int_t t = tmr_int_init(0);
+    tmr_int_inject_all(&t, 1, 2, 3);
+    int val = 0;
+    tmr_status_t s = tmr_int_read(&t, &val);
+    CHECK(s == TMR_ERR_NO_MAJORITY);
+}
+
+static void test_write_restores_clean_state(void) {
+    printf("Tmr: write restores clean state\n");
+    tmr_int_t t = tmr_int_init(0);
+    tmr_int_inject_all(&t, 1, 2, 3);
+    tmr_int_write(&t, 99);
+    int val = 0;
+    tmr_status_t s = tmr_int_read(&t, &val);
+    CHECK(s == TMR_OK);
+    CHECK(val == 99);
+}
+
+int main(void) {
+    test_clean_read_returns_value();
+    test_single_fault_majority_wins();
+    test_no_majority_error_returned();
+    test_write_restores_clean_state();
+
+    printf("\n%d/%d checks passed\n", g_total - g_failed, g_total);
+    return g_failed == 0 ? 0 : 1;
+}
