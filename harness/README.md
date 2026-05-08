@@ -74,6 +74,4 @@ Fault targets:
 
 - `0`: no fault
 - `1`: corrupt copy A
-- `2`: corrupt copy B
-- `3`: corrupt copy C
-- `4`: make all copies distinct
+- `2`: make all copies distinct

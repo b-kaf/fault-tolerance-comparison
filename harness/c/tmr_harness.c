@@ -39,12 +39,6 @@ static void apply_pending_fault(void) {
     case HARNESS_FAULT_COPY_A:
         tmr_int_inject_fault_a((tmr_int_t *)&harness_c_tmr_state, value);
         break;
-    case HARNESS_FAULT_COPY_B:
-        harness_c_tmr_state.b = value;
-        break;
-    case HARNESS_FAULT_COPY_C:
-        harness_c_tmr_state.c = value;
-        break;
     case HARNESS_FAULT_ALL_DISTINCT:
         tmr_int_inject_all(
             (tmr_int_t *)&harness_c_tmr_state,

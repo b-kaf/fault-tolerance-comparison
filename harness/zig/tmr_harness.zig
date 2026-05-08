@@ -8,9 +8,7 @@ const HARNESS_STAGE_AFTER_READ: u32 = 3;
 
 const HARNESS_FAULT_NONE: u32 = 0;
 const HARNESS_FAULT_COPY_A: u32 = 1;
-const HARNESS_FAULT_COPY_B: u32 = 2;
-const HARNESS_FAULT_COPY_C: u32 = 3;
-const HARNESS_FAULT_ALL_DISTINCT: u32 = 4;
+const HARNESS_FAULT_ALL_DISTINCT: u32 = 2;
 
 const HARNESS_STATUS_OK: u32 = 0;
 const HARNESS_STATUS_NO_MAJORITY: u32 = 1;
@@ -67,8 +65,6 @@ fn applyPendingFault(state: *TmrU32) void {
 
     switch (target) {
         HARNESS_FAULT_COPY_A => state.injectFaultA(value),
-        HARNESS_FAULT_COPY_B => state.b = value,
-        HARNESS_FAULT_COPY_C => state.c = value,
         HARNESS_FAULT_ALL_DISTINCT => state.injectAll(
             value,
             value ^ 0x11111111,

@@ -1,0 +1,23 @@
+If:
+  PathMatch: harness/c/.*\.c
+CompileFlags:
+  Add:
+    - -xc
+    - -std=c11
+    - -I../common
+    - -I../../c/tmr
+    - -ffreestanding
+---
+If:
+  PathMatch: c/.*\.c
+CompileFlags:
+  Add:
+    - -xc
+    - -std=c11
+---
+If:
+  PathMatch: .*\.h
+CompileFlags:
+  Add:
+    - -xc-header
+    - -std=c11
