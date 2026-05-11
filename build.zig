@@ -32,11 +32,24 @@ pub fn build(b: *std.Build) void {
 
     const run_tmr = b.addRunArtifact(tmr_tests);
 
+    const checker_mod = b.createModule(.{
+        .root_source_file = b.path("zig/checker/checker.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const checker_tests = b.addTest(.{
+        .root_module = checker_mod,
+    });
+
+    const run_checker = b.addRunArtifact(checker_tests);
+
     const c_tmr_mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
+    c_tmr_mod.addIncludePath(b.path("c/common"));
     c_tmr_mod.addIncludePath(b.path("c/tmr"));
     c_tmr_mod.addCSourceFile(.{
         .file = b.path("c/tmr/tmr_test.c"),
@@ -54,10 +67,35 @@ pub fn build(b: *std.Build) void {
 
     const run_c_tmr = b.addRunArtifact(c_tmr_tests);
 
+    const c_checker_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    c_checker_mod.addIncludePath(b.path("c/common"));
+    c_checker_mod.addIncludePath(b.path("c/checker"));
+    c_checker_mod.addCSourceFile(.{
+        .file = b.path("c/checker/checker_test.c"),
+        .flags = &.{
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+        },
+    });
+
+    const c_checker_tests = b.addExecutable(.{
+        .name = "c-checker-tests",
+        .root_module = c_checker_mod,
+    });
+
+    const run_c_checker = b.addRunArtifact(c_checker_tests);
+
     const test_step = b.step("test", "Run all tests");
 
     test_step.dependOn(&run_tmr.step);
+    test_step.dependOn(&run_checker.step);
     test_step.dependOn(&run_c_tmr.step);
+    test_step.dependOn(&run_c_checker.step);
 
     const mps2_an386 = b.resolveTargetQuery(.{
         .cpu_arch = .thumb,

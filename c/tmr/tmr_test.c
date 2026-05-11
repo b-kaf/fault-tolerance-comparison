@@ -1,18 +1,7 @@
-#include <stdio.h>
 #include <stdint.h>
 
+#include "test.h"
 #include "tmr.h"
-
-static int g_failed = 0;
-static int g_total = 0;
-
-#define CHECK(expr) do {                                                       \
-    g_total += 1;                                                              \
-    if (!(expr)) {                                                             \
-        g_failed += 1;                                                         \
-        fprintf(stderr, "  FAIL: %s:%d: %s\n", __FILE__, __LINE__, #expr);     \
-    }                                                                          \
-} while (0)
 
 static void test_clean_read_returns_value(void) {
     printf("Tmr: clean read returns value\n");
@@ -60,6 +49,5 @@ int main(void) {
     test_no_majority_error_returned();
     test_write_restores_clean_state();
 
-    printf("\n%d/%d checks passed\n", g_total - g_failed, g_total);
-    return g_failed == 0 ? 0 : 1;
+    return test_finish("");
 }
