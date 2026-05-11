@@ -1,9 +1,11 @@
 import argparse
 import csv
+import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 from injector.gdbmi import GdbMi
 
@@ -11,6 +13,45 @@ from injector.gdbmi import GdbMi
 FAULT_NONE = 0
 FAULT_COPY_A = 1
 FAULT_ALL_DISTINCT = 2
+FAULT_ACTIVE_VALUE = 10
+FAULT_ACTIVE_LENGTH = 11
+FAULT_ACTIVE_CHECKSUM = 12
+FAULT_CHECKPOINT_VALUE = 13
+FAULT_CHECKPOINT_CHECKSUM = 14
+FAULT_ACTIVE_VALUE_AND_CHECKPOINT_CHECKSUM = 15
+
+# TMR fault values depend on the iteration's expected pattern, so each entry
+# is a callable: expected -> (fault_target, fault_value).
+TMR_CAMPAIGNS: dict[str, Callable[[int], tuple[int, int]]] = {
+    "none": lambda exp: (FAULT_NONE, 0),
+    "single-a": lambda exp: (FAULT_COPY_A, exp ^ 0xFFFFFFFF),
+    "all-distinct": lambda exp: (FAULT_ALL_DISTINCT, exp ^ 0x13579BDF),
+}
+TMR_MIXED_ORDER: tuple[str, ...] = ("none", "single-a", "all-distinct")
+
+# Checkpoint faults are independent of iteration/expected, so a static map.
+# Any campaign not listed here (e.g. "mixed", "probe-mixed-radiation") rotates
+# through CHECKPOINT_MIXED_ORDER per iteration.
+CHECKPOINT_CAMPAIGNS: dict[str, tuple[int, int]] = {
+    "none":                           (FAULT_NONE, 0),
+    "probe-clean-cruise":             (FAULT_NONE, 0),
+    "probe-active-bitflip":           (FAULT_ACTIVE_VALUE, 0xFFFFFFFF),
+    "probe-telemetry-length-corrupt": (FAULT_ACTIVE_LENGTH, 0xFFFFFFFF),
+    "probe-active-checksum-corrupt":  (FAULT_ACTIVE_CHECKSUM, 0x10),
+    "probe-stale-checkpoint":         (FAULT_CHECKPOINT_CHECKSUM, 0x10),
+    "probe-double-corruption":        (FAULT_ACTIVE_VALUE_AND_CHECKPOINT_CHECKSUM, 0xFFFFFFFF),
+}
+CHECKPOINT_MIXED_ORDER: tuple[str, ...] = (
+    "none",
+    "probe-active-bitflip",
+    "probe-telemetry-length-corrupt",
+    "probe-active-checksum-corrupt",
+    "probe-stale-checkpoint",
+    "probe-double-corruption",
+)
+CHECKPOINT_PROBE_CHOICES: tuple[str, ...] = tuple(
+    name for name in CHECKPOINT_CAMPAIGNS if name.startswith("probe-")
+) + ("probe-mixed-radiation",)
 
 
 def qemu_command(args: argparse.Namespace) -> list[str]:
@@ -39,46 +80,85 @@ def start_qemu(args: argparse.Namespace) -> subprocess.Popen[bytes]:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )
-    time.sleep(args.qemu_startup_delay)
-    if proc.poll() is not None:
-        stderr = proc.stderr.read().decode(
-            "utf-8", errors="replace") if proc.stderr else ""
-        raise SystemExit(
-            f"QEMU exited early with status {proc.returncode}\n{stderr}")
+    try:
+        wait_for_gdb_port(proc, args.host, args.port,
+                          args.qemu_startup_timeout)
+    except BaseException:
+        proc.kill()
+        proc.wait(timeout=2)
+        raise
     return proc
 
 
-def choose_fault(campaign: str, iteration: int, expected: int) -> tuple[int, int]:
-    if campaign == "none":
-        return FAULT_NONE, 0
-    if campaign == "single-a":
-        return FAULT_COPY_A, expected ^ 0xFFFFFFFF
-    if campaign == "all-distinct":
-        return FAULT_ALL_DISTINCT, expected ^ 0x13579BDF
+def wait_for_gdb_port(
+    proc: subprocess.Popen[bytes],
+    host: str,
+    port: int,
+    timeout: float,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode(
+                "utf-8", errors="replace") if proc.stderr else ""
+            raise SystemExit(
+                f"QEMU exited early with status {proc.returncode}\n{stderr}")
+        try:
+            with socket.create_connection((host, port), timeout=0.25):
+                return
+        except OSError:
+            time.sleep(0.025)
+    raise SystemExit(
+        f"QEMU did not open GDB port {host}:{port} within {timeout:.1f}s")
 
-    schedule = (
-        (FAULT_NONE, 0),
-        (FAULT_COPY_A, expected ^ 0xFFFFFFFF),
-        (FAULT_ALL_DISTINCT, expected ^ 0x13579BDF),
-    )
-    return schedule[(iteration - 1) % len(schedule)]
+
+def infer_implementation(elf: Path) -> str:
+    name = elf.name.lower()
+    if "zig" in name:
+        return "zig"
+    if "-c-" in name or name.startswith("c-") or name.endswith("-c-m4.elf"):
+        return "c"
+    return "unknown"
+
+
+def choose_tmr_fault(campaign: str, iteration: int, expected: int) -> tuple[int, int]:
+    chooser = TMR_CAMPAIGNS.get(campaign)
+    if chooser is not None:
+        return chooser(expected)
+    key = TMR_MIXED_ORDER[(iteration - 1) % len(TMR_MIXED_ORDER)]
+    return TMR_CAMPAIGNS[key](expected)
+
+
+def choose_checkpoint_fault(campaign: str, iteration: int) -> tuple[int, int]:
+    entry = CHECKPOINT_CAMPAIGNS.get(campaign)
+    if entry is not None:
+        return entry
+    key = CHECKPOINT_MIXED_ORDER[(iteration - 1) % len(CHECKPOINT_MIXED_ORDER)]
+    return CHECKPOINT_CAMPAIGNS[key]
 
 
 def run_campaign(args: argparse.Namespace) -> int:
+    if args.technique == "checkpoint":
+        return run_checkpoint_campaign(args)
+    return run_tmr_campaign(args)
+
+
+def run_tmr_campaign(args: argparse.Namespace) -> int:
     qemu = start_qemu(args) if args.launch_qemu else None
     rows = []
+    implementation = infer_implementation(args.elf)
 
     try:
         gdb = GdbMi(args)
         try:
-            breakpoints = gdb.install_breakpoints()
+            breakpoints = gdb.install_tmr_breakpoints()
 
             for _ in range(args.iterations):
                 gdb.continue_until_breakpoint(breakpoints.after_init)
 
                 iteration = gdb.read_u32("harness_iteration")
                 expected = gdb.read_u32("harness_last_expected")
-                fault_target, fault_value = choose_fault(
+                fault_target, fault_value = choose_tmr_fault(
                     args.campaign, iteration, expected)
                 gdb.write_u32("harness_fault_value", fault_value)
                 gdb.write_u32("harness_fault_target", fault_target)
@@ -86,6 +166,9 @@ def run_campaign(args: argparse.Namespace) -> int:
                 gdb.continue_until_breakpoint(breakpoints.after_read)
 
                 row = {
+                    "technique": "tmr",
+                    "implementation": implementation,
+                    "campaign": args.campaign,
                     "iteration": iteration,
                     "stage": gdb.read_u32("harness_stage"),
                     "fault_target": gdb.read_u32("harness_last_fault_target"),
@@ -112,17 +195,87 @@ def run_campaign(args: argparse.Namespace) -> int:
     return 0 if rows and rows[-1]["failures"] == 0 else 1
 
 
-def write_rows(path: Path | None, rows: list[dict[str, int]]) -> None:
-    fieldnames = [
+def run_checkpoint_campaign(args: argparse.Namespace) -> int:
+    qemu = start_qemu(args) if args.launch_qemu else None
+    rows = []
+    implementation = infer_implementation(args.elf)
+
+    try:
+        gdb = GdbMi(args)
+        try:
+            breakpoints = gdb.install_checkpoint_breakpoints()
+
+            for _ in range(args.iterations):
+                gdb.continue_until_breakpoint(breakpoints.after_mutation)
+
+                iteration = gdb.read_u32("harness_iteration")
+                fault_target, fault_value = choose_checkpoint_fault(
+                    args.campaign, iteration)
+                gdb.write_u32("harness_fault_value", fault_value)
+                gdb.write_u32("harness_fault_target", fault_target)
+
+                gdb.continue_until_breakpoint(breakpoints.after_commit)
+
+                row = {
+                    "technique": "checkpoint",
+                    "implementation": implementation,
+                    "campaign": args.campaign,
+                    "iteration": iteration,
+                    "stage": gdb.read_u32("harness_stage"),
+                    "fault_target": gdb.read_u32("harness_last_fault_target"),
+                    "fault_value": fault_value & 0xFFFFFFFF,
+                    "initial_value": gdb.read_u32("harness_last_initial_value"),
+                    "expected": gdb.read_u32("harness_last_expected"),
+                    "status": gdb.read_u32("harness_last_status"),
+                    "restart_status": gdb.read_u32("harness_last_restart_status"),
+                    "active_check": gdb.read_u32("harness_last_active_check"),
+                    "checkpoint_check": gdb.read_u32("harness_last_checkpoint_check"),
+                    "value": gdb.read_u32("harness_last_value"),
+                    "active_value": gdb.read_u32("harness_last_active_value"),
+                    "checkpoint_value": gdb.read_u32("harness_last_checkpoint_value"),
+                    "passes": gdb.read_u32("harness_passes"),
+                    "failures": gdb.read_u32("harness_failures"),
+                }
+                rows.append(row)
+        finally:
+            gdb.close()
+    finally:
+        if qemu is not None:
+            qemu.terminate()
+            try:
+                qemu.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                qemu.kill()
+                qemu.wait(timeout=2)
+
+    write_rows(args.csv, rows)
+    return 0 if rows and rows[-1]["failures"] == 0 else 1
+
+
+def write_rows(path: Path | None, rows: list[dict[str, object]]) -> None:
+    preferred_fieldnames = [
+        "technique",
+        "implementation",
+        "campaign",
         "iteration",
         "stage",
         "fault_target",
         "fault_value",
+        "initial_value",
         "expected",
         "status",
+        "restart_status",
+        "active_check",
+        "checkpoint_check",
         "value",
+        "active_value",
+        "checkpoint_value",
         "passes",
         "failures",
+    ]
+    fieldnames = [
+        field for field in preferred_fieldnames
+        if any(field in row for row in rows)
     ]
     output = open(path, "w", newline="",
                   encoding="utf-8") if path else sys.stdout
@@ -137,14 +290,26 @@ def write_rows(path: Path | None, rows: list[dict[str, int]]) -> None:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run QEMU/GDB-RSP fault-injection campaigns against TMR harness firmware.",
+        description="Run QEMU/GDB-RSP fault-injection campaigns against harness firmware.",
     )
     parser.add_argument("--elf", type=Path, required=True,
                         help="Harness ELF built by `zig build harness`.")
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument(
+        "--technique",
+        choices=("tmr", "checkpoint"),
+        default="tmr",
+        help="Harness technique ABI to drive.",
+    )
+    parser.add_argument(
         "--campaign",
-        choices=("mixed", "none", "single-a", "all-distinct"),
+        choices=(
+            "mixed",
+            "none",
+            "single-a",
+            "all-distinct",
+            *CHECKPOINT_PROBE_CHOICES,
+        ),
         default="mixed",
     )
     parser.add_argument("--csv", type=Path,
@@ -157,8 +322,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="Launch QEMU before connecting.")
     parser.add_argument("--qemu", default="qemu-system-arm")
     parser.add_argument("--gdb", default="gdb")
-    parser.add_argument("--qemu-startup-delay", type=float, default=0.5)
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--qemu-startup-timeout",
+        type=float,
+        default=10.0,
+        help="Seconds to wait for QEMU's GDB-RSP port to accept connections.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.technique == "tmr" and args.campaign in CHECKPOINT_PROBE_CHOICES:
+        parser.error("probe-* campaigns require --technique checkpoint")
+    if args.technique == "checkpoint" and args.campaign in ("single-a", "all-distinct"):
+        parser.error("single-a/all-distinct campaigns require --technique tmr")
+
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

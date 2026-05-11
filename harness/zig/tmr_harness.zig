@@ -1,17 +1,6 @@
 const tmr = @import("tmr");
+const abi = @import("abi");
 const std = @import("std");
-
-const HARNESS_STAGE_BOOT: u32 = 0;
-const HARNESS_STAGE_AFTER_INIT: u32 = 1;
-const HARNESS_STAGE_BEFORE_READ: u32 = 2;
-const HARNESS_STAGE_AFTER_READ: u32 = 3;
-
-const HARNESS_FAULT_NONE: u32 = 0;
-const HARNESS_FAULT_COPY_A: u32 = 1;
-const HARNESS_FAULT_ALL_DISTINCT: u32 = 2;
-
-const HARNESS_STATUS_OK: u32 = 0;
-const HARNESS_STATUS_NO_MAJORITY: u32 = 1;
 
 const TmrU32 = tmr.Tmr(u32);
 
@@ -30,7 +19,7 @@ export var harness_zig_tmr_b: u32 = 0;
 export var harness_zig_tmr_c: u32 = 0;
 export var harness_zig_tmr_fault_count: u32 = 0;
 
-fn load(ptr: *volatile const u32) u32 {
+fn load(ptr: *const volatile u32) u32 {
     return ptr.*;
 }
 
@@ -50,11 +39,11 @@ fn mirrorState(state: *const TmrU32) void {
 }
 
 export fn harness_injection_point_after_init() callconv(.c) void {
-    asm volatile ("nop");
+    asm volatile ("nop // injection_point_after_init");
 }
 
 export fn harness_injection_point_after_read() callconv(.c) void {
-    asm volatile ("nop");
+    asm volatile ("nop // injection_point_after_read");
 }
 
 fn applyPendingFault(state: *TmrU32) void {
@@ -64,8 +53,8 @@ fn applyPendingFault(state: *TmrU32) void {
     store(&harness_last_fault_target, target);
 
     switch (target) {
-        HARNESS_FAULT_COPY_A => state.injectFaultA(value),
-        HARNESS_FAULT_ALL_DISTINCT => state.injectAll(
+        abi.fault.copy_a => state.injectFaultA(value),
+        abi.fault.all_distinct => state.injectAll(
             value,
             value ^ 0x11111111,
             value ^ 0x22222222,
@@ -73,16 +62,16 @@ fn applyPendingFault(state: *TmrU32) void {
         else => {},
     }
 
-    store(&harness_fault_target, HARNESS_FAULT_NONE);
+    store(&harness_fault_target, abi.fault.none);
     mirrorState(state);
 }
 
-fn validate(expected: u32, status: u32, value: u32) void {
+fn validate(expected: u32, tmr_status: u32, value: u32) void {
     const injected = load(&harness_last_fault_target);
-    const expect_no_majority = injected == HARNESS_FAULT_ALL_DISTINCT;
+    const expect_no_majority = injected == abi.fault.all_distinct;
 
     if (expect_no_majority) {
-        if (status == HARNESS_STATUS_NO_MAJORITY) {
+        if (tmr_status == abi.status.no_majority) {
             store(&harness_passes, load(&harness_passes) +% 1);
         } else {
             store(&harness_failures, load(&harness_failures) +% 1);
@@ -90,7 +79,7 @@ fn validate(expected: u32, status: u32, value: u32) void {
         return;
     }
 
-    if (status == HARNESS_STATUS_OK and value == expected) {
+    if (tmr_status == abi.status.ok and value == expected) {
         store(&harness_passes, load(&harness_passes) +% 1);
     } else {
         store(&harness_failures, load(&harness_failures) +% 1);
@@ -98,7 +87,7 @@ fn validate(expected: u32, status: u32, value: u32) void {
 }
 
 export fn harness_main() callconv(.c) noreturn {
-    store(&harness_stage, HARNESS_STAGE_BOOT);
+    store(&harness_stage, abi.stage.boot);
 
     while (true) {
         const iteration = load(&harness_iteration) +% 1;
@@ -108,29 +97,29 @@ export fn harness_main() callconv(.c) noreturn {
         store(&harness_iteration, iteration);
         store(&harness_last_expected, expected);
         store(&harness_last_value, 0);
-        store(&harness_last_status, HARNESS_STATUS_OK);
-        store(&harness_last_fault_target, HARNESS_FAULT_NONE);
+        store(&harness_last_status, abi.status.ok);
+        store(&harness_last_fault_target, abi.fault.none);
         mirrorState(&state);
 
-        store(&harness_stage, HARNESS_STAGE_AFTER_INIT);
-        harness_injection_point_after_init();
+        store(&harness_stage, abi.stage.after_init);
+        @call(.never_inline, harness_injection_point_after_init, .{});
 
         applyPendingFault(&state);
 
-        store(&harness_stage, HARNESS_STAGE_BEFORE_READ);
+        store(&harness_stage, abi.stage.before_read);
         if (state.read()) |value| {
             store(&harness_last_value, value);
-            store(&harness_last_status, HARNESS_STATUS_OK);
+            store(&harness_last_status, abi.status.ok);
         } else |err| switch (err) {
             tmr.TmrError.NoMajority => {
-                store(&harness_last_status, HARNESS_STATUS_NO_MAJORITY);
+                store(&harness_last_status, abi.status.no_majority);
             },
         }
         mirrorState(&state);
 
-        store(&harness_stage, HARNESS_STAGE_AFTER_READ);
+        store(&harness_stage, abi.stage.after_read);
         validate(expected, load(&harness_last_status), load(&harness_last_value));
-        harness_injection_point_after_read();
+        @call(.never_inline, harness_injection_point_after_read, .{});
     }
 }
 

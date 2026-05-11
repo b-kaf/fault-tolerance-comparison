@@ -1,101 +1,57 @@
 const std = @import("std");
 
-// Although this function looks imperative, it does not perform the build
-// directly and instead it mutates the build graph (`b`) that will be then
-// executed by an external runner. The functions in `std.Build` implement a DSL
-// for defining build steps and express dependencies between them, allowing the
-// build runner to parallelize the build automatically (and the cache system to
-// know when a step doesn't need to be re-run).
+const Import = struct {
+    name: []const u8,
+    module: *std.Build.Module,
+};
+
 pub fn build(b: *std.Build) void {
-    // Standard target options allow the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
-    // It's also possible to define more custom flags to toggle optional features
-    // of this build script using `b.option()`. All defined flags (including
-    // target and optimize options) will be listed when running `zig build --help`
-    // in this directory.
-    const tmr_mod = b.createModule(.{
-        .root_source_file = b.path("zig/tmr/tmr.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const tmr_tests = b.addTest(.{
-        .root_module = tmr_mod,
-    });
-
-    const run_tmr = b.addRunArtifact(tmr_tests);
-
-    const checker_mod = b.createModule(.{
-        .root_source_file = b.path("zig/checker/checker.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const checker_tests = b.addTest(.{
-        .root_module = checker_mod,
-    });
-
-    const run_checker = b.addRunArtifact(checker_tests);
-
-    const c_tmr_mod = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    c_tmr_mod.addIncludePath(b.path("c/common"));
-    c_tmr_mod.addIncludePath(b.path("c/tmr"));
-    c_tmr_mod.addCSourceFile(.{
-        .file = b.path("c/tmr/tmr_test.c"),
-        .flags = &.{
-            "-std=c11",
-            "-Wall",
-            "-Wextra",
-        },
-    });
-
-    const c_tmr_tests = b.addExecutable(.{
-        .name = "c-tmr-tests",
-        .root_module = c_tmr_mod,
-    });
-
-    const run_c_tmr = b.addRunArtifact(c_tmr_tests);
-
-    const c_checker_mod = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    c_checker_mod.addIncludePath(b.path("c/common"));
-    c_checker_mod.addIncludePath(b.path("c/checker"));
-    c_checker_mod.addCSourceFile(.{
-        .file = b.path("c/checker/checker_test.c"),
-        .flags = &.{
-            "-std=c11",
-            "-Wall",
-            "-Wextra",
-        },
-    });
-
-    const c_checker_tests = b.addExecutable(.{
-        .name = "c-checker-tests",
-        .root_module = c_checker_mod,
-    });
-
-    const run_c_checker = b.addRunArtifact(c_checker_tests);
 
     const test_step = b.step("test", "Run all tests");
 
-    test_step.dependOn(&run_tmr.step);
-    test_step.dependOn(&run_checker.step);
-    test_step.dependOn(&run_c_tmr.step);
-    test_step.dependOn(&run_c_checker.step);
+    const tmr_mod = makeZigModule(b, "zig/tmr/tmr.zig", &.{}, target, optimize);
+    const checker_mod = makeZigModule(b, "zig/checker/checker.zig", &.{}, target, optimize);
+    const checkpoint_mod = makeZigModule(
+        b,
+        "zig/checkpoint/checkpoint.zig",
+        &.{.{ .name = "checker", .module = checker_mod }},
+        target,
+        optimize,
+    );
+
+    addZigTest(b, tmr_mod, test_step);
+    addZigTest(b, checker_mod, test_step);
+    addZigTest(b, checkpoint_mod, test_step);
+
+    addCTest(
+        b,
+        "c-tmr-tests",
+        "c/tmr/tmr_test.c",
+        &.{ "c/common", "c/tmr" },
+        target,
+        optimize,
+        test_step,
+    );
+    addCTest(
+        b,
+        "c-checker-tests",
+        "c/checker/checker_test.c",
+        &.{ "c/common", "c/checker" },
+        target,
+        optimize,
+        test_step,
+    );
+    addCTest(
+        b,
+        "c-checkpoint-tests",
+        "c/checkpoint/checkpoint_test.c",
+        &.{ "c/common", "c/checker", "c/checkpoint" },
+        target,
+        optimize,
+        test_step,
+    );
 
     const mps2_an386 = b.resolveTargetQuery(.{
         .cpu_arch = .thumb,
@@ -110,62 +66,179 @@ pub fn build(b: *std.Build) void {
         "Build QEMU mps2-an386 Cortex-M4 fault-injection harness firmware",
     );
 
-    const harness_c_mod = b.createModule(.{
-        .target = mps2_an386,
-        .optimize = optimize,
-    });
-    harness_c_mod.addIncludePath(b.path("harness/common"));
-    harness_c_mod.addIncludePath(b.path("c/tmr"));
-    harness_c_mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
-    harness_c_mod.addCSourceFile(.{
-        .file = b.path("harness/c/tmr_harness.c"),
-        .flags = &.{
-            "-std=c11",
-            "-Wall",
-            "-Wextra",
-            "-ffreestanding",
-            "-fno-builtin",
+    addCortexM4CHarness(
+        b,
+        "tmr-harness-c-m4",
+        "harness/c/tmr_harness.c",
+        &.{ "harness/common", "c/tmr" },
+        "tmr-harness-c-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+    addCortexM4CHarness(
+        b,
+        "checkpoint-harness-c-m4",
+        "harness/c/checkpoint_harness.c",
+        &.{ "harness/common", "c/checker", "c/checkpoint" },
+        "checkpoint-harness-c-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+
+    const harness_abi_m4 = makeZigModule(
+        b,
+        "harness/common/harness_abi.zig",
+        &.{},
+        mps2_an386,
+        optimize,
+    );
+    const tmr_m4 = makeZigModule(b, "zig/tmr/tmr.zig", &.{}, mps2_an386, optimize);
+    const checker_m4 = makeZigModule(b, "zig/checker/checker.zig", &.{}, mps2_an386, optimize);
+    const checkpoint_m4 = makeZigModule(
+        b,
+        "zig/checkpoint/checkpoint.zig",
+        &.{.{ .name = "checker", .module = checker_m4 }},
+        mps2_an386,
+        optimize,
+    );
+
+    addCortexM4ZigHarness(
+        b,
+        "tmr-harness-zig-m4",
+        "harness/zig/tmr_harness.zig",
+        &.{
+            .{ .name = "tmr", .module = tmr_m4 },
+            .{ .name = "abi", .module = harness_abi_m4 },
         },
-    });
+        "tmr-harness-zig-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+    addCortexM4ZigHarness(
+        b,
+        "checkpoint-harness-zig-m4",
+        "harness/zig/checkpoint_harness.zig",
+        &.{
+            .{ .name = "checker", .module = checker_m4 },
+            .{ .name = "checkpoint", .module = checkpoint_m4 },
+            .{ .name = "abi", .module = harness_abi_m4 },
+        },
+        "checkpoint-harness-zig-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+}
 
-    const harness_c = b.addExecutable(.{
-        .name = "tmr-harness-c-m4",
-        .root_module = harness_c_mod,
-    });
-    harness_c.entry = .{ .symbol_name = "Reset_Handler" };
-    harness_c.link_gc_sections = false;
-    harness_c.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
-
-    const tmr_import_mod = b.createModule(.{
-        .root_source_file = b.path("zig/tmr/tmr.zig"),
-        .target = mps2_an386,
+fn makeZigModule(
+    b: *std.Build,
+    root_path: []const u8,
+    imports: []const Import,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    const mod = b.createModule(.{
+        .root_source_file = b.path(root_path),
+        .target = target,
         .optimize = optimize,
     });
-    const harness_zig_mod = b.createModule(.{
-        .root_source_file = b.path("harness/zig/tmr_harness.zig"),
-        .target = mps2_an386,
+    for (imports) |imp| mod.addImport(imp.name, imp.module);
+    return mod;
+}
+
+fn addZigTest(b: *std.Build, mod: *std.Build.Module, test_step: *std.Build.Step) void {
+    const tests = b.addTest(.{ .root_module = mod });
+    const run = b.addRunArtifact(tests);
+    test_step.dependOn(&run.step);
+}
+
+fn addCTest(
+    b: *std.Build,
+    name: []const u8,
+    source_path: []const u8,
+    include_paths: []const []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    test_step: *std.Build.Step,
+) void {
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    for (include_paths) |inc| mod.addIncludePath(b.path(inc));
+    mod.addCSourceFile(.{
+        .file = b.path(source_path),
+        .flags = &.{ "-std=c11", "-Wall", "-Wextra" },
+    });
+    const exe = b.addExecutable(.{ .name = name, .root_module = mod });
+    const run = b.addRunArtifact(exe);
+    test_step.dependOn(&run.step);
+}
+
+fn addCortexM4CHarness(
+    b: *std.Build,
+    name: []const u8,
+    source_path: []const u8,
+    include_paths: []const []const u8,
+    install_sub_path: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    harness_step: *std.Build.Step,
+) void {
+    const mod = b.createModule(.{
+        .target = target,
         .optimize = optimize,
     });
-    harness_zig_mod.addImport("tmr", tmr_import_mod);
-    harness_zig_mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
-
-    const harness_zig = b.addExecutable(.{
-        .name = "tmr-harness-zig-m4",
-        .root_module = harness_zig_mod,
+    for (include_paths) |inc| mod.addIncludePath(b.path(inc));
+    mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
+    mod.addCSourceFile(.{
+        .file = b.path(source_path),
+        .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-ffreestanding", "-fno-builtin" },
     });
-    harness_zig.entry = .{ .symbol_name = "Reset_Handler" };
-    harness_zig.link_gc_sections = false;
-    harness_zig.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
+    const exe = b.addExecutable(.{ .name = name, .root_module = mod });
+    exe.entry = .{ .symbol_name = "Reset_Handler" };
+    exe.link_gc_sections = false;
+    exe.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
+    installHarness(b, exe, install_sub_path, harness_step);
+}
 
-    const install_harness_c = b.addInstallArtifact(harness_c, .{
+fn addCortexM4ZigHarness(
+    b: *std.Build,
+    name: []const u8,
+    root_source_path: []const u8,
+    imports: []const Import,
+    install_sub_path: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    harness_step: *std.Build.Step,
+) void {
+    const mod = b.createModule(.{
+        .root_source_file = b.path(root_source_path),
+        .target = target,
+        .optimize = optimize,
+    });
+    for (imports) |imp| mod.addImport(imp.name, imp.module);
+    mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
+    const exe = b.addExecutable(.{ .name = name, .root_module = mod });
+    exe.entry = .{ .symbol_name = "Reset_Handler" };
+    exe.link_gc_sections = false;
+    exe.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
+    installHarness(b, exe, install_sub_path, harness_step);
+}
+
+fn installHarness(
+    b: *std.Build,
+    exe: *std.Build.Step.Compile,
+    sub_path: []const u8,
+    harness_step: *std.Build.Step,
+) void {
+    const install = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "harness" } },
-        .dest_sub_path = "tmr-harness-c-m4.elf",
+        .dest_sub_path = sub_path,
     });
-    const install_harness_zig = b.addInstallArtifact(harness_zig, .{
-        .dest_dir = .{ .override = .{ .custom = "harness" } },
-        .dest_sub_path = "tmr-harness-zig-m4.elf",
-    });
-
-    harness_step.dependOn(&install_harness_c.step);
-    harness_step.dependOn(&install_harness_zig.step);
+    harness_step.dependOn(&install.step);
 }

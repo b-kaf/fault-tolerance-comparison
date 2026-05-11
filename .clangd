@@ -6,6 +6,8 @@ CompileFlags:
     - -std=c11
     - -I../common
     - -I../../c/tmr
+    - -I../../c/checkpoint
+    - -I../../c/checker
     - -ffreestanding
 ---
 If:

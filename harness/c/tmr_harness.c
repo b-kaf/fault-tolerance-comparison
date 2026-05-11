@@ -3,6 +3,11 @@
 #include "harness_abi.h"
 #include "../../c/tmr/tmr.h"
 
+_Static_assert((int)TMR_OK == HARNESS_STATUS_OK,
+    "tmr_status_t::TMR_OK must match HARNESS_STATUS_OK");
+_Static_assert((int)TMR_ERR_NO_MAJORITY == HARNESS_STATUS_NO_MAJORITY,
+    "tmr_status_t::TMR_ERR_NO_MAJORITY must match HARNESS_STATUS_NO_MAJORITY");
+
 volatile uint32_t harness_iteration;
 volatile uint32_t harness_stage;
 volatile uint32_t harness_fault_target;

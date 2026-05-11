@@ -15,6 +15,9 @@ pub fn Tmr(comptime T: type) type {
         a: T,
         b: T,
         c: T,
+        /// Cumulative, saturating count of reads where the three copies
+        /// were not unanimous. Never reset implicitly — a clean read
+        /// leaves it unchanged. Re-init the triplet to clear.
         fault_count: u32,
 
         const Self = @This();
@@ -38,26 +41,25 @@ pub fn Tmr(comptime T: type) type {
         /// if all three copies disagree.
         pub fn read(self: *Self) TmrError!T {
             if (self.a == self.b and self.b == self.c) {
-                self.fault_count = 0;
                 return self.a;
             }
 
             // Single-fault cases — majority still valid
             if (self.a == self.b) {
-                self.fault_count += 1;
+                self.fault_count +|= 1;
                 return self.a;
             }
             if (self.a == self.c) {
-                self.fault_count += 1;
+                self.fault_count +|= 1;
                 return self.a;
             }
             if (self.b == self.c) {
-                self.fault_count += 1;
+                self.fault_count +|= 1;
                 return self.b;
             }
 
             // No majority
-            self.fault_count += 1;
+            self.fault_count +|= 1;
             return TmrError.NoMajority;
         }
 
@@ -110,4 +112,23 @@ test "Tmr: works with bool type" {
     t.injectFaultA(false);
     const val = try t.read();
     try std.testing.expect(val == true);
+}
+
+test "Tmr: clean read does not reset fault_count" {
+    var t = Tmr(u32).init(7);
+    t.injectFaultA(0xFF);
+    _ = try t.read();
+    try std.testing.expectEqual(@as(u32, 1), t.fault_count);
+
+    t.write(7);
+    _ = try t.read();
+    try std.testing.expectEqual(@as(u32, 1), t.fault_count);
+}
+
+test "Tmr: fault_count saturates at u32 max" {
+    var t = Tmr(u32).init(7);
+    t.fault_count = std.math.maxInt(u32);
+    t.injectFaultA(0xFF);
+    _ = try t.read();
+    try std.testing.expectEqual(std.math.maxInt(u32), t.fault_count);
 }

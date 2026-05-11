@@ -1,10 +1,12 @@
 # Fault-Injection Harness
 
-This harness builds two bare-metal Cortex-M4 firmware images for QEMU's
+This harness builds bare-metal Cortex-M4 firmware images for QEMU's
 `mps2-an386` machine:
 
 - `tmr-harness-c-m4.elf` exercises `c/tmr/tmr.h`.
 - `tmr-harness-zig-m4.elf` exercises `zig/tmr/tmr.zig`.
+- `checkpoint-harness-c-m4.elf` exercises `c/checkpoint/checkpoint.h`.
+- `checkpoint-harness-zig-m4.elf` exercises `zig/checkpoint/checkpoint.zig`.
 
 Both are cross-compiled by Zig through `build.zig`. Shared startup, linker, and
 ABI definitions live in `harness/common`; implementation-specific loop harnesses
@@ -25,11 +27,27 @@ cd harness/injector
 uv run python main.py \
   --launch-qemu \
   --elf ../../zig-out/harness/tmr-harness-c-m4.elf \
+  --technique tmr \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
   --elf ../../zig-out/harness/tmr-harness-zig-m4.elf \
+  --technique tmr \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/checkpoint-harness-c-m4.elf \
+  --technique checkpoint \
+  --campaign probe-mixed-radiation \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/checkpoint-harness-zig-m4.elf \
+  --technique checkpoint \
+  --campaign probe-mixed-radiation \
   --iterations 20
 ```
 
@@ -46,7 +64,7 @@ firmware.
 
 ## Firmware ABI
 
-Each image runs forever. Every loop iteration:
+Each TMR image runs forever. Every loop iteration:
 
 1. Initializes a TMR value from a deterministic pattern.
 2. Calls `harness_injection_point_after_init`.
@@ -75,3 +93,41 @@ Fault targets:
 - `0`: no fault
 - `1`: corrupt copy A
 - `2`: make all copies distinct
+
+Checkpoint harness images use a simplified space-probe telemetry/control record:
+
+- `tag`: telemetry frame type;
+- `value`: bounded probe state value, such as an attitude or instrument setpoint;
+- `min` and `max`: safe operating envelope;
+- `length` and `capacity`: downlink frame sizing;
+- `checksum`: frame integrity check.
+
+Each checkpoint loop iteration:
+
+1. Initializes a valid probe record.
+2. Captures it as the last known-good checkpoint.
+3. Applies a deterministic valid flight-software update to active state.
+4. Calls `harness_injection_point_after_mutation`.
+5. Applies any requested active/checkpoint corruption.
+6. Calls checkpoint `commit_or_restart`, validates the outcome, and updates counters.
+7. Calls `harness_injection_point_after_commit`.
+
+Additional stable symbols exposed by checkpoint images:
+
+- `harness_injection_point_after_mutation`
+- `harness_injection_point_after_commit`
+- `harness_last_initial_value`
+- `harness_last_restart_status`
+- `harness_last_active_check`
+- `harness_last_checkpoint_check`
+- `harness_last_active_value`
+- `harness_last_checkpoint_value`
+
+Checkpoint fault targets:
+
+- `10`: corrupt active `value`
+- `11`: corrupt active `length`
+- `12`: corrupt active `checksum`
+- `13`: corrupt checkpoint `value`
+- `14`: corrupt checkpoint `checksum`
+- `15`: corrupt active `value` and checkpoint `checksum`

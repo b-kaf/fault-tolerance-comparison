@@ -18,9 +18,15 @@ def parse_u32(value: str) -> int:
 
 
 @dataclass
-class Breakpoints:
+class TmrBreakpoints:
     after_init: str
     after_read: str
+
+
+@dataclass
+class CheckpointBreakpoints:
+    after_mutation: str
+    after_commit: str
 
 
 class GdbMi:
@@ -45,10 +51,15 @@ class GdbMi:
     def close(self) -> None:
         self.gdb.exit()
 
-    def install_breakpoints(self) -> Breakpoints:
+    def install_tmr_breakpoints(self) -> TmrBreakpoints:
         after_init = self._insert_breakpoint("harness_injection_point_after_init")
         after_read = self._insert_breakpoint("harness_injection_point_after_read")
-        return Breakpoints(after_init=after_init, after_read=after_read)
+        return TmrBreakpoints(after_init=after_init, after_read=after_read)
+
+    def install_checkpoint_breakpoints(self) -> CheckpointBreakpoints:
+        after_mutation = self._insert_breakpoint("harness_injection_point_after_mutation")
+        after_commit = self._insert_breakpoint("harness_injection_point_after_commit")
+        return CheckpointBreakpoints(after_mutation=after_mutation, after_commit=after_commit)
 
     def continue_until_breakpoint(self, breakpoint_number: str) -> dict[str, Any]:
         responses = self._write("-exec-continue", timeout=0.1, allow_timeout=True)

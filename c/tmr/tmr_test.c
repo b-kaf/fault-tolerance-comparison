@@ -43,11 +43,36 @@ static void test_write_restores_clean_state(void) {
     CHECK(val == 99);
 }
 
+static void test_clean_read_does_not_reset_fault_count(void) {
+    printf("Tmr: clean read does not reset fault count\n");
+    tmr_int_t t = tmr_int_init(7);
+    tmr_int_inject_fault_a(&t, 0xFF);
+    int val = 0;
+    (void)tmr_int_read(&t, &val);
+    CHECK(t.fault_count == 1);
+
+    tmr_int_write(&t, 7); /* restores clean state without touching counter */
+    (void)tmr_int_read(&t, &val);
+    CHECK(t.fault_count == 1);
+}
+
+static void test_fault_count_saturates_at_u32_max(void) {
+    printf("Tmr: fault count saturates at UINT32_MAX\n");
+    tmr_int_t t = tmr_int_init(7);
+    t.fault_count = UINT32_MAX;
+    tmr_int_inject_fault_a(&t, 0xFF);
+    int val = 0;
+    (void)tmr_int_read(&t, &val);
+    CHECK(t.fault_count == UINT32_MAX);
+}
+
 int main(void) {
     test_clean_read_returns_value();
     test_single_fault_majority_wins();
     test_no_majority_error_returned();
     test_write_restores_clean_state();
+    test_clean_read_does_not_reset_fault_count();
+    test_fault_count_saturates_at_u32_max();
 
     return test_finish("");
 }
