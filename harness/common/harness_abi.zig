@@ -14,6 +14,10 @@ pub const stage = struct {
     pub const after_primary: u32 = 9;
     pub const after_alternate: u32 = 10;
     pub const after_recovery: u32 = 11;
+    pub const before_control_flow: u32 = 12;
+    pub const after_control_read: u32 = 13;
+    pub const after_control_compute: u32 = 14;
+    pub const after_control_flow: u32 = 15;
 };
 
 pub const fault = struct {
@@ -30,6 +34,11 @@ pub const fault = struct {
     pub const recovery_primary_checksum: u32 = 21;
     pub const recovery_primary_value_and_alternate_checksum: u32 = 22;
     pub const recovery_primary_value_and_checkpoint_checksum: u32 = 23;
+    pub const control_phase: u32 = 30;
+    pub const control_signature: u32 = 31;
+    pub const control_skip_compute: u32 = 32;
+    pub const control_repeat_read: u32 = 33;
+    pub const control_early_terminal: u32 = 34;
 };
 
 pub const status = struct {
@@ -49,4 +58,11 @@ pub const recovery = struct {
     pub const unrecoverable: u32 = 2;
     pub const checkpoint_failed: u32 = 3;
     pub const restore_failed: u32 = 4;
+};
+
+pub const control = struct {
+    pub const ok: u32 = 0;
+    pub const invalid_transition: u32 = 1;
+    pub const bad_signature: u32 = 2;
+    pub const unexpected_terminal: u32 = 3;
 };

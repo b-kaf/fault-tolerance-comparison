@@ -35,6 +35,12 @@ class RecoveryBlockBreakpoints:
     after_recovery: str
 
 
+@dataclass
+class ControlFlowBreakpoints:
+    before_control_flow: str
+    after_control_flow: str
+
+
 class GdbMi:
     def __init__(self, args: argparse.Namespace):
         self.stop_timeout = args.stop_timeout
@@ -73,6 +79,16 @@ class GdbMi:
         return RecoveryBlockBreakpoints(
             before_recovery=before_recovery,
             after_recovery=after_recovery,
+        )
+
+    def install_control_flow_breakpoints(self) -> ControlFlowBreakpoints:
+        before_control_flow = self._insert_breakpoint(
+            "harness_injection_point_before_control_flow")
+        after_control_flow = self._insert_breakpoint(
+            "harness_injection_point_after_control_flow")
+        return ControlFlowBreakpoints(
+            before_control_flow=before_control_flow,
+            after_control_flow=after_control_flow,
         )
 
     def continue_until_breakpoint(self, breakpoint_number: str) -> dict[str, Any]:

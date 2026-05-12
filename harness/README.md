@@ -9,6 +9,8 @@ This harness builds bare-metal Cortex-M4 firmware images for QEMU's
 - `checkpoint-harness-zig-m4.elf` exercises `zig/checkpoint/checkpoint.zig`.
 - `recovery-block-harness-c-m4.elf` exercises `c/recovery_block/recovery_block.h`.
 - `recovery-block-harness-zig-m4.elf` exercises `zig/recovery_block/recovery_block.zig`.
+- `control-flow-harness-c-m4.elf` exercises `c/control_flow/control_flow.h`.
+- `control-flow-harness-zig-m4.elf` exercises `zig/control_flow/control_flow.zig`.
 
 Both are cross-compiled by Zig through `build.zig`. Shared startup, linker, and
 ABI definitions live in `harness/common`; implementation-specific loop harnesses
@@ -64,6 +66,20 @@ uv run python main.py \
   --elf ../../zig-out/harness/recovery-block-harness-zig-m4.elf \
   --technique recovery-block \
   --campaign recovery-mixed-radiation \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/control-flow-harness-c-m4.elf \
+  --technique control-flow \
+  --campaign control-mixed-radiation \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/control-flow-harness-zig-m4.elf \
+  --technique control-flow \
+  --campaign control-mixed-radiation \
   --iterations 20
 ```
 
@@ -183,3 +199,41 @@ Recovery-block fault targets:
 - `21`: corrupt primary `checksum`
 - `22`: corrupt primary `value` and alternate `checksum`
 - `23`: corrupt primary `value` and checkpoint `checksum`
+
+Control-flow harness images monitor an explicit software-signature sequence:
+
+1. `start`
+2. `read_input`
+3. `compute`
+4. `validate`
+5. `commit`
+6. `done`
+
+Each transition validates the current phase and its expected signature before
+advancing. Each iteration:
+
+1. Calls `harness_injection_point_before_control_flow`.
+2. Advances through the monitored operation.
+3. Applies requested phase or signature corruption after `read_input`, or
+   simulates a skipped, repeated, or early-terminal path.
+4. Records transition status, terminal status, final phase, signature,
+   transition count, value, and pass/fail counters.
+5. Calls `harness_injection_point_after_control_flow`.
+
+Additional stable symbols exposed by control-flow images:
+
+- `harness_injection_point_before_control_flow`
+- `harness_injection_point_after_control_flow`
+- `harness_last_control_status`
+- `harness_last_terminal_status`
+- `harness_last_phase`
+- `harness_last_signature`
+- `harness_last_transitions`
+
+Control-flow fault targets:
+
+- `30`: corrupt current phase
+- `31`: corrupt current signature
+- `32`: skip compute transition
+- `33`: repeat read transition
+- `34`: finish before reaching `done`

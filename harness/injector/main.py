@@ -23,6 +23,13 @@ FAULT_RECOVERY_PRIMARY_VALUE = 20
 FAULT_RECOVERY_PRIMARY_CHECKSUM = 21
 FAULT_RECOVERY_PRIMARY_VALUE_AND_ALTERNATE_CHECKSUM = 22
 FAULT_RECOVERY_PRIMARY_VALUE_AND_CHECKPOINT_CHECKSUM = 23
+FAULT_CONTROL_PHASE = 30
+FAULT_CONTROL_SIGNATURE = 31
+FAULT_CONTROL_SKIP_COMPUTE = 32
+FAULT_CONTROL_REPEAT_READ = 33
+FAULT_CONTROL_EARLY_TERMINAL = 34
+
+CONTROL_PHASE_COMMIT = 4
 
 # TMR fault values depend on the iteration's expected pattern, so each entry
 # is a callable: expected -> (fault_target, fault_value).
@@ -78,6 +85,27 @@ RECOVERY_BLOCK_MIXED_ORDER: tuple[str, ...] = (
 RECOVERY_BLOCK_CHOICES: tuple[str, ...] = tuple(
     name for name in RECOVERY_BLOCK_CAMPAIGNS if name.startswith("recovery-")
 ) + ("recovery-mixed-radiation",)
+
+CONTROL_FLOW_CAMPAIGNS: dict[str, tuple[int, int]] = {
+    "none":                       (FAULT_NONE, 0),
+    "control-clean-path":         (FAULT_NONE, 0),
+    "control-phase-corrupt":      (FAULT_CONTROL_PHASE, CONTROL_PHASE_COMMIT),
+    "control-signature-corrupt":  (FAULT_CONTROL_SIGNATURE, 0x10),
+    "control-skip-compute":       (FAULT_CONTROL_SKIP_COMPUTE, 0),
+    "control-repeat-read":        (FAULT_CONTROL_REPEAT_READ, 0),
+    "control-early-terminal":     (FAULT_CONTROL_EARLY_TERMINAL, 0),
+}
+CONTROL_FLOW_MIXED_ORDER: tuple[str, ...] = (
+    "none",
+    "control-phase-corrupt",
+    "control-signature-corrupt",
+    "control-skip-compute",
+    "control-repeat-read",
+    "control-early-terminal",
+)
+CONTROL_FLOW_CHOICES: tuple[str, ...] = tuple(
+    name for name in CONTROL_FLOW_CAMPAIGNS if name.startswith("control-")
+) + ("control-mixed-radiation",)
 
 
 def qemu_command(args: argparse.Namespace) -> list[str]:
@@ -171,11 +199,21 @@ def choose_recovery_block_fault(campaign: str, iteration: int) -> tuple[int, int
     return RECOVERY_BLOCK_CAMPAIGNS[key]
 
 
+def choose_control_flow_fault(campaign: str, iteration: int) -> tuple[int, int]:
+    entry = CONTROL_FLOW_CAMPAIGNS.get(campaign)
+    if entry is not None:
+        return entry
+    key = CONTROL_FLOW_MIXED_ORDER[(iteration - 1) % len(CONTROL_FLOW_MIXED_ORDER)]
+    return CONTROL_FLOW_CAMPAIGNS[key]
+
+
 def run_campaign(args: argparse.Namespace) -> int:
     if args.technique == "checkpoint":
         return run_checkpoint_campaign(args)
     if args.technique == "recovery-block":
         return run_recovery_block_campaign(args)
+    if args.technique == "control-flow":
+        return run_control_flow_campaign(args)
     return run_tmr_campaign(args)
 
 
@@ -347,6 +385,62 @@ def run_recovery_block_campaign(args: argparse.Namespace) -> int:
     return 0 if rows and rows[-1]["failures"] == 0 else 1
 
 
+def run_control_flow_campaign(args: argparse.Namespace) -> int:
+    qemu = start_qemu(args) if args.launch_qemu else None
+    rows = []
+    implementation = infer_implementation(args.elf)
+
+    try:
+        gdb = GdbMi(args)
+        try:
+            breakpoints = gdb.install_control_flow_breakpoints()
+
+            for _ in range(args.iterations):
+                gdb.continue_until_breakpoint(breakpoints.before_control_flow)
+
+                iteration = gdb.read_u32("harness_iteration")
+                fault_target, fault_value = choose_control_flow_fault(
+                    args.campaign, iteration)
+                gdb.write_u32("harness_fault_value", fault_value)
+                gdb.write_u32("harness_fault_target", fault_target)
+
+                gdb.continue_until_breakpoint(breakpoints.after_control_flow)
+
+                row = {
+                    "technique": "control-flow",
+                    "implementation": implementation,
+                    "campaign": args.campaign,
+                    "iteration": iteration,
+                    "stage": gdb.read_u32("harness_stage"),
+                    "fault_target": gdb.read_u32("harness_last_fault_target"),
+                    "fault_value": fault_value & 0xFFFFFFFF,
+                    "expected": gdb.read_u32("harness_last_expected"),
+                    "status": gdb.read_u32("harness_last_status"),
+                    "control_status": gdb.read_u32("harness_last_control_status"),
+                    "terminal_status": gdb.read_u32("harness_last_terminal_status"),
+                    "phase": gdb.read_u32("harness_last_phase"),
+                    "signature": gdb.read_u32("harness_last_signature"),
+                    "transitions": gdb.read_u32("harness_last_transitions"),
+                    "value": gdb.read_u32("harness_last_value"),
+                    "passes": gdb.read_u32("harness_passes"),
+                    "failures": gdb.read_u32("harness_failures"),
+                }
+                rows.append(row)
+        finally:
+            gdb.close()
+    finally:
+        if qemu is not None:
+            qemu.terminate()
+            try:
+                qemu.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                qemu.kill()
+                qemu.wait(timeout=2)
+
+    write_rows(args.csv, rows)
+    return 0 if rows and rows[-1]["failures"] == 0 else 1
+
+
 def write_rows(path: Path | None, rows: list[dict[str, object]]) -> None:
     preferred_fieldnames = [
         "technique",
@@ -361,11 +455,16 @@ def write_rows(path: Path | None, rows: list[dict[str, object]]) -> None:
         "status",
         "restart_status",
         "recovery_status",
+        "control_status",
+        "terminal_status",
         "active_check",
         "checkpoint_check",
         "primary_check",
         "restore_check",
         "alternate_check",
+        "phase",
+        "signature",
+        "transitions",
         "value",
         "active_value",
         "checkpoint_value",
@@ -396,7 +495,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument(
         "--technique",
-        choices=("tmr", "checkpoint", "recovery-block"),
+        choices=("tmr", "checkpoint", "recovery-block", "control-flow"),
         default="tmr",
         help="Harness technique ABI to drive.",
     )
@@ -409,6 +508,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "all-distinct",
             *CHECKPOINT_PROBE_CHOICES,
             *RECOVERY_BLOCK_CHOICES,
+            *CONTROL_FLOW_CHOICES,
         ),
         default="mixed",
     )
@@ -433,21 +533,35 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     if args.technique == "tmr" and (
         args.campaign in CHECKPOINT_PROBE_CHOICES
         or args.campaign in RECOVERY_BLOCK_CHOICES
+        or args.campaign in CONTROL_FLOW_CHOICES
     ):
         parser.error("probe-* campaigns require --technique checkpoint; "
-                     "recovery-* campaigns require --technique recovery-block")
+                     "recovery-* campaigns require --technique recovery-block; "
+                     "control-* campaigns require --technique control-flow")
     if args.technique == "checkpoint" and (
         args.campaign in ("single-a", "all-distinct")
         or args.campaign in RECOVERY_BLOCK_CHOICES
+        or args.campaign in CONTROL_FLOW_CHOICES
     ):
         parser.error("single-a/all-distinct campaigns require --technique tmr; "
-                     "recovery-* campaigns require --technique recovery-block")
+                     "recovery-* campaigns require --technique recovery-block; "
+                     "control-* campaigns require --technique control-flow")
     if args.technique == "recovery-block" and (
         args.campaign in ("single-a", "all-distinct")
         or args.campaign in CHECKPOINT_PROBE_CHOICES
+        or args.campaign in CONTROL_FLOW_CHOICES
     ):
         parser.error("single-a/all-distinct campaigns require --technique tmr; "
-                     "probe-* campaigns require --technique checkpoint")
+                     "probe-* campaigns require --technique checkpoint; "
+                     "control-* campaigns require --technique control-flow")
+    if args.technique == "control-flow" and (
+        args.campaign in ("single-a", "all-distinct")
+        or args.campaign in CHECKPOINT_PROBE_CHOICES
+        or args.campaign in RECOVERY_BLOCK_CHOICES
+    ):
+        parser.error("single-a/all-distinct campaigns require --technique tmr; "
+                     "probe-* campaigns require --technique checkpoint; "
+                     "recovery-* campaigns require --technique recovery-block")
 
     return args
 

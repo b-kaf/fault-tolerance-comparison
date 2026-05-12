@@ -63,6 +63,24 @@ uv run python main.py \
   --iterations 20
 ```
 
+Run a control-flow checking campaign:
+
+```sh
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/control-flow-harness-c-m4.elf \
+  --technique control-flow \
+  --campaign control-mixed-radiation \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/control-flow-harness-zig-m4.elf \
+  --technique control-flow \
+  --campaign control-mixed-radiation \
+  --iterations 20
+```
+
 Use `--csv <path>` to save campaign output.
 
 Checkpoint campaigns:
@@ -83,3 +101,13 @@ Recovery-block campaigns:
 - `recovery-alternate-checksum`
 - `recovery-restore-failure`
 - `recovery-mixed-radiation`
+
+Control-flow campaigns:
+
+- `control-clean-path`
+- `control-phase-corrupt`
+- `control-signature-corrupt`
+- `control-skip-compute`
+- `control-repeat-read`
+- `control-early-terminal`
+- `control-mixed-radiation`
