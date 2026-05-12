@@ -20,10 +20,21 @@ pub fn build(b: *std.Build) void {
         target,
         optimize,
     );
+    const recovery_block_mod = makeZigModule(
+        b,
+        "zig/recovery_block/recovery_block.zig",
+        &.{
+            .{ .name = "checker", .module = checker_mod },
+            .{ .name = "checkpoint", .module = checkpoint_mod },
+        },
+        target,
+        optimize,
+    );
 
     addZigTest(b, tmr_mod, test_step);
     addZigTest(b, checker_mod, test_step);
     addZigTest(b, checkpoint_mod, test_step);
+    addZigTest(b, recovery_block_mod, test_step);
 
     addCTest(
         b,
@@ -48,6 +59,15 @@ pub fn build(b: *std.Build) void {
         "c-checkpoint-tests",
         "c/checkpoint/checkpoint_test.c",
         &.{ "c/common", "c/checker", "c/checkpoint" },
+        target,
+        optimize,
+        test_step,
+    );
+    addCTest(
+        b,
+        "c-recovery-block-tests",
+        "c/recovery_block/recovery_block_test.c",
+        &.{ "c/common", "c/checker", "c/checkpoint", "c/recovery_block" },
         target,
         optimize,
         test_step,
@@ -86,6 +106,16 @@ pub fn build(b: *std.Build) void {
         optimize,
         harness_step,
     );
+    addCortexM4CHarness(
+        b,
+        "recovery-block-harness-c-m4",
+        "harness/c/recovery_block_harness.c",
+        &.{ "harness/common", "c/checker", "c/checkpoint", "c/recovery_block" },
+        "recovery-block-harness-c-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
 
     const harness_abi_m4 = makeZigModule(
         b,
@@ -100,6 +130,16 @@ pub fn build(b: *std.Build) void {
         b,
         "zig/checkpoint/checkpoint.zig",
         &.{.{ .name = "checker", .module = checker_m4 }},
+        mps2_an386,
+        optimize,
+    );
+    const recovery_block_m4 = makeZigModule(
+        b,
+        "zig/recovery_block/recovery_block.zig",
+        &.{
+            .{ .name = "checker", .module = checker_m4 },
+            .{ .name = "checkpoint", .module = checkpoint_m4 },
+        },
         mps2_an386,
         optimize,
     );
@@ -127,6 +167,21 @@ pub fn build(b: *std.Build) void {
             .{ .name = "abi", .module = harness_abi_m4 },
         },
         "checkpoint-harness-zig-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+    addCortexM4ZigHarness(
+        b,
+        "recovery-block-harness-zig-m4",
+        "harness/zig/recovery_block_harness.zig",
+        &.{
+            .{ .name = "checker", .module = checker_m4 },
+            .{ .name = "checkpoint", .module = checkpoint_m4 },
+            .{ .name = "recovery_block", .module = recovery_block_m4 },
+            .{ .name = "abi", .module = harness_abi_m4 },
+        },
+        "recovery-block-harness-zig-m4.elf",
         mps2_an386,
         optimize,
         harness_step,

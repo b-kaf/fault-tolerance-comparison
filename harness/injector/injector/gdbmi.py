@@ -29,6 +29,12 @@ class CheckpointBreakpoints:
     after_commit: str
 
 
+@dataclass
+class RecoveryBlockBreakpoints:
+    before_recovery: str
+    after_recovery: str
+
+
 class GdbMi:
     def __init__(self, args: argparse.Namespace):
         self.stop_timeout = args.stop_timeout
@@ -60,6 +66,14 @@ class GdbMi:
         after_mutation = self._insert_breakpoint("harness_injection_point_after_mutation")
         after_commit = self._insert_breakpoint("harness_injection_point_after_commit")
         return CheckpointBreakpoints(after_mutation=after_mutation, after_commit=after_commit)
+
+    def install_recovery_block_breakpoints(self) -> RecoveryBlockBreakpoints:
+        before_recovery = self._insert_breakpoint("harness_injection_point_before_recovery")
+        after_recovery = self._insert_breakpoint("harness_injection_point_after_recovery")
+        return RecoveryBlockBreakpoints(
+            before_recovery=before_recovery,
+            after_recovery=after_recovery,
+        )
 
     def continue_until_breakpoint(self, breakpoint_number: str) -> dict[str, Any]:
         responses = self._write("-exec-continue", timeout=0.1, allow_timeout=True)

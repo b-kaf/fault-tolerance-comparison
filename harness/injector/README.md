@@ -45,6 +45,24 @@ uv run python main.py \
   --iterations 20
 ```
 
+Run a recovery-block campaign:
+
+```sh
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/recovery-block-harness-c-m4.elf \
+  --technique recovery-block \
+  --campaign recovery-mixed-radiation \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/recovery-block-harness-zig-m4.elf \
+  --technique recovery-block \
+  --campaign recovery-mixed-radiation \
+  --iterations 20
+```
+
 Use `--csv <path>` to save campaign output.
 
 Checkpoint campaigns:
@@ -56,3 +74,12 @@ Checkpoint campaigns:
 - `probe-stale-checkpoint`
 - `probe-double-corruption`
 - `probe-mixed-radiation`
+
+Recovery-block campaigns:
+
+- `recovery-clean-primary`
+- `recovery-primary-range`
+- `recovery-primary-checksum`
+- `recovery-alternate-checksum`
+- `recovery-restore-failure`
+- `recovery-mixed-radiation`

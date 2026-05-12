@@ -7,6 +7,8 @@ This harness builds bare-metal Cortex-M4 firmware images for QEMU's
 - `tmr-harness-zig-m4.elf` exercises `zig/tmr/tmr.zig`.
 - `checkpoint-harness-c-m4.elf` exercises `c/checkpoint/checkpoint.h`.
 - `checkpoint-harness-zig-m4.elf` exercises `zig/checkpoint/checkpoint.zig`.
+- `recovery-block-harness-c-m4.elf` exercises `c/recovery_block/recovery_block.h`.
+- `recovery-block-harness-zig-m4.elf` exercises `zig/recovery_block/recovery_block.zig`.
 
 Both are cross-compiled by Zig through `build.zig`. Shared startup, linker, and
 ABI definitions live in `harness/common`; implementation-specific loop harnesses
@@ -48,6 +50,20 @@ uv run python main.py \
   --elf ../../zig-out/harness/checkpoint-harness-zig-m4.elf \
   --technique checkpoint \
   --campaign probe-mixed-radiation \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/recovery-block-harness-c-m4.elf \
+  --technique recovery-block \
+  --campaign recovery-mixed-radiation \
+  --iterations 20
+
+uv run python main.py \
+  --launch-qemu \
+  --elf ../../zig-out/harness/recovery-block-harness-zig-m4.elf \
+  --technique recovery-block \
+  --campaign recovery-mixed-radiation \
   --iterations 20
 ```
 
@@ -131,3 +147,39 @@ Checkpoint fault targets:
 - `13`: corrupt checkpoint `value`
 - `14`: corrupt checkpoint `checksum`
 - `15`: corrupt active `value` and checkpoint `checksum`
+
+Recovery-block harness images use the same checked probe record. Each
+iteration:
+
+1. Initializes a valid probe record.
+2. Calls `harness_injection_point_before_recovery`.
+3. Runs a recovery block with a direct-form primary implementation.
+4. Applies any requested primary corruption after the primary result and before
+   the acceptance test.
+5. Restores the checkpoint and runs a repeated-addition alternate when the
+   primary result is rejected.
+6. Applies any requested alternate corruption after the alternate result and
+   before its acceptance test.
+7. Records recovery status, checker statuses, final active/checkpoint values,
+   and pass/fail counters.
+8. Calls `harness_injection_point_after_recovery`.
+
+Additional stable symbols exposed by recovery-block images:
+
+- `harness_injection_point_before_recovery`
+- `harness_injection_point_after_recovery`
+- `harness_last_recovery_status`
+- `harness_last_checkpoint_check`
+- `harness_last_primary_check`
+- `harness_last_restore_check`
+- `harness_last_alternate_check`
+- `harness_last_initial_value`
+- `harness_last_active_value`
+- `harness_last_checkpoint_value`
+
+Recovery-block fault targets:
+
+- `20`: corrupt primary `value`
+- `21`: corrupt primary `checksum`
+- `22`: corrupt primary `value` and alternate `checksum`
+- `23`: corrupt primary `value` and checkpoint `checksum`

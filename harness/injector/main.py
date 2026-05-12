@@ -19,6 +19,10 @@ FAULT_ACTIVE_CHECKSUM = 12
 FAULT_CHECKPOINT_VALUE = 13
 FAULT_CHECKPOINT_CHECKSUM = 14
 FAULT_ACTIVE_VALUE_AND_CHECKPOINT_CHECKSUM = 15
+FAULT_RECOVERY_PRIMARY_VALUE = 20
+FAULT_RECOVERY_PRIMARY_CHECKSUM = 21
+FAULT_RECOVERY_PRIMARY_VALUE_AND_ALTERNATE_CHECKSUM = 22
+FAULT_RECOVERY_PRIMARY_VALUE_AND_CHECKPOINT_CHECKSUM = 23
 
 # TMR fault values depend on the iteration's expected pattern, so each entry
 # is a callable: expected -> (fault_target, fault_value).
@@ -52,6 +56,28 @@ CHECKPOINT_MIXED_ORDER: tuple[str, ...] = (
 CHECKPOINT_PROBE_CHOICES: tuple[str, ...] = tuple(
     name for name in CHECKPOINT_CAMPAIGNS if name.startswith("probe-")
 ) + ("probe-mixed-radiation",)
+
+# Recovery-block campaigns inject after the primary result and before the
+# acceptance test. Compound faults keep the primary rejection explicit so the
+# alternate or restore path is actually exercised.
+RECOVERY_BLOCK_CAMPAIGNS: dict[str, tuple[int, int]] = {
+    "none":                         (FAULT_NONE, 0),
+    "recovery-clean-primary":       (FAULT_NONE, 0),
+    "recovery-primary-range":       (FAULT_RECOVERY_PRIMARY_VALUE, 0xFFFFFFFF),
+    "recovery-primary-checksum":    (FAULT_RECOVERY_PRIMARY_CHECKSUM, 0x10),
+    "recovery-alternate-checksum":  (FAULT_RECOVERY_PRIMARY_VALUE_AND_ALTERNATE_CHECKSUM, 0xFFFFFFFF),
+    "recovery-restore-failure":     (FAULT_RECOVERY_PRIMARY_VALUE_AND_CHECKPOINT_CHECKSUM, 0xFFFFFFFF),
+}
+RECOVERY_BLOCK_MIXED_ORDER: tuple[str, ...] = (
+    "none",
+    "recovery-primary-range",
+    "recovery-primary-checksum",
+    "recovery-alternate-checksum",
+    "recovery-restore-failure",
+)
+RECOVERY_BLOCK_CHOICES: tuple[str, ...] = tuple(
+    name for name in RECOVERY_BLOCK_CAMPAIGNS if name.startswith("recovery-")
+) + ("recovery-mixed-radiation",)
 
 
 def qemu_command(args: argparse.Namespace) -> list[str]:
@@ -137,9 +163,19 @@ def choose_checkpoint_fault(campaign: str, iteration: int) -> tuple[int, int]:
     return CHECKPOINT_CAMPAIGNS[key]
 
 
+def choose_recovery_block_fault(campaign: str, iteration: int) -> tuple[int, int]:
+    entry = RECOVERY_BLOCK_CAMPAIGNS.get(campaign)
+    if entry is not None:
+        return entry
+    key = RECOVERY_BLOCK_MIXED_ORDER[(iteration - 1) % len(RECOVERY_BLOCK_MIXED_ORDER)]
+    return RECOVERY_BLOCK_CAMPAIGNS[key]
+
+
 def run_campaign(args: argparse.Namespace) -> int:
     if args.technique == "checkpoint":
         return run_checkpoint_campaign(args)
+    if args.technique == "recovery-block":
+        return run_recovery_block_campaign(args)
     return run_tmr_campaign(args)
 
 
@@ -252,6 +288,65 @@ def run_checkpoint_campaign(args: argparse.Namespace) -> int:
     return 0 if rows and rows[-1]["failures"] == 0 else 1
 
 
+def run_recovery_block_campaign(args: argparse.Namespace) -> int:
+    qemu = start_qemu(args) if args.launch_qemu else None
+    rows = []
+    implementation = infer_implementation(args.elf)
+
+    try:
+        gdb = GdbMi(args)
+        try:
+            breakpoints = gdb.install_recovery_block_breakpoints()
+
+            for _ in range(args.iterations):
+                gdb.continue_until_breakpoint(breakpoints.before_recovery)
+
+                iteration = gdb.read_u32("harness_iteration")
+                fault_target, fault_value = choose_recovery_block_fault(
+                    args.campaign, iteration)
+                gdb.write_u32("harness_fault_value", fault_value)
+                gdb.write_u32("harness_fault_target", fault_target)
+
+                gdb.continue_until_breakpoint(breakpoints.after_recovery)
+
+                row = {
+                    "technique": "recovery-block",
+                    "implementation": implementation,
+                    "campaign": args.campaign,
+                    "iteration": iteration,
+                    "stage": gdb.read_u32("harness_stage"),
+                    "fault_target": gdb.read_u32("harness_last_fault_target"),
+                    "fault_value": fault_value & 0xFFFFFFFF,
+                    "initial_value": gdb.read_u32("harness_last_initial_value"),
+                    "expected": gdb.read_u32("harness_last_expected"),
+                    "status": gdb.read_u32("harness_last_status"),
+                    "recovery_status": gdb.read_u32("harness_last_recovery_status"),
+                    "checkpoint_check": gdb.read_u32("harness_last_checkpoint_check"),
+                    "primary_check": gdb.read_u32("harness_last_primary_check"),
+                    "restore_check": gdb.read_u32("harness_last_restore_check"),
+                    "alternate_check": gdb.read_u32("harness_last_alternate_check"),
+                    "value": gdb.read_u32("harness_last_value"),
+                    "active_value": gdb.read_u32("harness_last_active_value"),
+                    "checkpoint_value": gdb.read_u32("harness_last_checkpoint_value"),
+                    "passes": gdb.read_u32("harness_passes"),
+                    "failures": gdb.read_u32("harness_failures"),
+                }
+                rows.append(row)
+        finally:
+            gdb.close()
+    finally:
+        if qemu is not None:
+            qemu.terminate()
+            try:
+                qemu.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                qemu.kill()
+                qemu.wait(timeout=2)
+
+    write_rows(args.csv, rows)
+    return 0 if rows and rows[-1]["failures"] == 0 else 1
+
+
 def write_rows(path: Path | None, rows: list[dict[str, object]]) -> None:
     preferred_fieldnames = [
         "technique",
@@ -265,8 +360,12 @@ def write_rows(path: Path | None, rows: list[dict[str, object]]) -> None:
         "expected",
         "status",
         "restart_status",
+        "recovery_status",
         "active_check",
         "checkpoint_check",
+        "primary_check",
+        "restore_check",
+        "alternate_check",
         "value",
         "active_value",
         "checkpoint_value",
@@ -297,7 +396,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument(
         "--technique",
-        choices=("tmr", "checkpoint"),
+        choices=("tmr", "checkpoint", "recovery-block"),
         default="tmr",
         help="Harness technique ABI to drive.",
     )
@@ -309,6 +408,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "single-a",
             "all-distinct",
             *CHECKPOINT_PROBE_CHOICES,
+            *RECOVERY_BLOCK_CHOICES,
         ),
         default="mixed",
     )
@@ -330,10 +430,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
 
-    if args.technique == "tmr" and args.campaign in CHECKPOINT_PROBE_CHOICES:
-        parser.error("probe-* campaigns require --technique checkpoint")
-    if args.technique == "checkpoint" and args.campaign in ("single-a", "all-distinct"):
-        parser.error("single-a/all-distinct campaigns require --technique tmr")
+    if args.technique == "tmr" and (
+        args.campaign in CHECKPOINT_PROBE_CHOICES
+        or args.campaign in RECOVERY_BLOCK_CHOICES
+    ):
+        parser.error("probe-* campaigns require --technique checkpoint; "
+                     "recovery-* campaigns require --technique recovery-block")
+    if args.technique == "checkpoint" and (
+        args.campaign in ("single-a", "all-distinct")
+        or args.campaign in RECOVERY_BLOCK_CHOICES
+    ):
+        parser.error("single-a/all-distinct campaigns require --technique tmr; "
+                     "recovery-* campaigns require --technique recovery-block")
+    if args.technique == "recovery-block" and (
+        args.campaign in ("single-a", "all-distinct")
+        or args.campaign in CHECKPOINT_PROBE_CHOICES
+    ):
+        parser.error("single-a/all-distinct campaigns require --technique tmr; "
+                     "probe-* campaigns require --technique checkpoint")
 
     return args
 
