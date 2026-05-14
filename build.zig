@@ -303,7 +303,7 @@ fn addCortexM4CHarness(
     });
     const exe = b.addExecutable(.{ .name = name, .root_module = mod });
     exe.entry = .{ .symbol_name = "Reset_Handler" };
-    exe.link_gc_sections = false;
+    exe.link_gc_sections = true;
     exe.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
     installHarness(b, exe, install_sub_path, harness_step);
 }
@@ -327,7 +327,7 @@ fn addCortexM4ZigHarness(
     mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
     const exe = b.addExecutable(.{ .name = name, .root_module = mod });
     exe.entry = .{ .symbol_name = "Reset_Handler" };
-    exe.link_gc_sections = false;
+    exe.link_gc_sections = true;
     exe.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
     installHarness(b, exe, install_sub_path, harness_step);
 }
