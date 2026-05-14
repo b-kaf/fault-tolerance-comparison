@@ -26,60 +26,75 @@ The ELFs are installed under `zig-out/harness/`.
 
 ## Run A Campaign
 
+From the devenv shell, the shortest form is:
+
+```sh
+harness-campaign c tmr
+```
+
+The helper takes `<language> <technique>` and always runs the `mixed` campaign
+for 10 iterations. Optional third and fourth arguments set the CSV output path
+and GDB port:
+
+```sh
+harness-campaign c tmr /tmp/tmr-c.csv 12410
+harness-campaign zig checkpoint -- /tmp/checkpoint-zig.csv 12411
+```
+
 ```sh
 cd harness/injector
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/tmr-harness-c-m4.elf \
   --technique tmr \
+  --language c \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/tmr-harness-zig-m4.elf \
   --technique tmr \
+  --language zig \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/checkpoint-harness-c-m4.elf \
   --technique checkpoint \
-  --campaign probe-mixed-radiation \
+  --language c \
+  --campaign checkpoint-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/checkpoint-harness-zig-m4.elf \
   --technique checkpoint \
-  --campaign probe-mixed-radiation \
+  --language zig \
+  --campaign checkpoint-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/recovery-block-harness-c-m4.elf \
   --technique recovery-block \
-  --campaign recovery-mixed-radiation \
+  --language c \
+  --campaign recovery-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/recovery-block-harness-zig-m4.elf \
   --technique recovery-block \
-  --campaign recovery-mixed-radiation \
+  --language zig \
+  --campaign recovery-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/control-flow-harness-c-m4.elf \
   --technique control-flow \
-  --campaign control-mixed-radiation \
+  --language c \
+  --campaign control-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/control-flow-harness-zig-m4.elf \
   --technique control-flow \
-  --campaign control-mixed-radiation \
+  --language zig \
+  --campaign control-mixed-faults \
   --iterations 20
 ```
 
@@ -89,10 +104,11 @@ The injector launches:
 qemu-system-arm -M mps2-an386 -cpu cortex-m4 -kernel <elf> -nographic -S -gdb tcp::<port>
 ```
 
-It then uses `pygdbmi` to drive GDB/MI. GDB connects to QEMU's GDB Remote Serial
-Protocol endpoint, places breakpoints on the exported injection hooks, writes
-the fault-control globals, and records the result counters exposed by the
-firmware.
+The `<elf>` path is inferred as
+`zig-out/harness/<technique>-harness-<language>-m4.elf`. The injector then uses
+`pygdbmi` to drive GDB/MI. GDB connects to QEMU's GDB Remote Serial Protocol
+endpoint, places breakpoints on the exported injection hooks, writes the
+fault-control globals, and records the result counters exposed by the firmware.
 
 ## Firmware ABI
 
@@ -126,19 +142,19 @@ Fault targets:
 - `1`: corrupt copy A
 - `2`: make all copies distinct
 
-Checkpoint harness images use a simplified space-probe telemetry/control record:
+Checkpoint harness images use a generic checked record:
 
-- `tag`: telemetry frame type;
-- `value`: bounded probe state value, such as an attitude or instrument setpoint;
-- `min` and `max`: safe operating envelope;
-- `length` and `capacity`: downlink frame sizing;
+- `tag`: record type;
+- `value`: bounded sample value;
+- `min` and `max`: accepted value range;
+- `length` and `capacity`: record sizing;
 - `checksum`: frame integrity check.
 
 Each checkpoint loop iteration:
 
-1. Initializes a valid probe record.
+1. Initializes a valid checked record.
 2. Captures it as the last known-good checkpoint.
-3. Applies a deterministic valid flight-software update to active state.
+3. Applies a deterministic valid update to active state.
 4. Calls `harness_injection_point_after_mutation`.
 5. Applies any requested active/checkpoint corruption.
 6. Calls checkpoint `commit_or_restart`, validates the outcome, and updates counters.
@@ -164,10 +180,10 @@ Checkpoint fault targets:
 - `14`: corrupt checkpoint `checksum`
 - `15`: corrupt active `value` and checkpoint `checksum`
 
-Recovery-block harness images use the same checked probe record. Each
+Recovery-block harness images use the same checked record. Each
 iteration:
 
-1. Initializes a valid probe record.
+1. Initializes a valid checked record.
 2. Calls `harness_injection_point_before_recovery`.
 3. Runs a recovery block with a direct-form primary implementation.
 4. Applies any requested primary corruption after the primary result and before

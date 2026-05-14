@@ -10,10 +10,12 @@
 
   # https://devenv.sh/packages/
   packages = [
+    pkgs.gdb
     pkgs.git
     pkgs.nixfmt
     pkgs.llvmPackages.bintools
     pkgs.qemu
+    pkgs.uv
   ];
 
   # https://devenv.sh/languages/
@@ -30,6 +32,26 @@
   # https://devenv.sh/scripts/
   scripts.harness-build.exec = ''
     zig build harness
+  '';
+  scripts.harness-campaign.exec = ''
+    set -eu
+
+    language="''${1:-}"
+    technique="''${2:-}"
+
+    if [ -z "$language" ] || [ -z "$technique" ]; then
+      echo "usage: harness-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow>" >&2
+      exit 2
+    fi
+
+    zig build harness
+
+    uv run --directory harness/injector python main.py \
+      --launch-qemu \
+      --language "$language" \
+      --technique "$technique" \
+      --campaign mixed \
+      --iterations 10
   '';
   scripts.harness-asm.exec = ''
     set -eu

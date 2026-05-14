@@ -16,25 +16,25 @@ static void test_status_codes_are_stable_abi_values(void) {
     CHECK(recovery_block_status_code(RECOVERY_BLOCK_RESTORE_FAILED) == 4);
 }
 
-static void test_probe_variants_compute_same_accepted_value(void) {
-    printf("Recovery block: probe variants compute same accepted value\n");
+static void test_sample_variants_compute_same_accepted_value(void) {
+    printf("Recovery block: sample variants compute same accepted value\n");
     for (uint32_t sample = 0; sample < 2000; sample += 137) {
-        CHECK(recovery_block_probe_primary_value(sample) ==
-              recovery_block_probe_alternate_value(sample));
+        CHECK(recovery_block_sample_primary_value(sample) ==
+              recovery_block_sample_alternate_value(sample));
     }
 }
 
 static void test_primary_success_commits_primary_result(void) {
     printf("Recovery block: primary success commits primary result\n");
     checkpoint_record_t state = checkpoint_record_init(clean_record());
-    const recovery_block_probe_update_t update = {
+    const recovery_block_sample_update_t update = {
         7,
-        RECOVERY_BLOCK_PROBE_FAULT_NONE,
+        RECOVERY_BLOCK_SAMPLE_FAULT_NONE,
     };
-    const uint32_t expected = recovery_block_probe_primary_value(update.sample);
+    const uint32_t expected = recovery_block_sample_primary_value(update.sample);
 
     const recovery_block_result_t result =
-        recovery_block_probe_update(&state, update);
+        recovery_block_sample_update(&state, update);
 
     CHECK(result.status == RECOVERY_BLOCK_PRIMARY_ACCEPTED);
     CHECK(result.checkpoint_check == CHECKER_OK);
@@ -50,14 +50,14 @@ static void test_primary_success_commits_primary_result(void) {
 static void test_primary_range_failure_recovers_with_alternate(void) {
     printf("Recovery block: primary range failure recovers with alternate\n");
     checkpoint_record_t state = checkpoint_record_init(clean_record());
-    const recovery_block_probe_update_t update = {
+    const recovery_block_sample_update_t update = {
         11,
-        RECOVERY_BLOCK_PROBE_FAULT_PRIMARY_RANGE,
+        RECOVERY_BLOCK_SAMPLE_FAULT_PRIMARY_RANGE,
     };
-    const uint32_t expected = recovery_block_probe_alternate_value(update.sample);
+    const uint32_t expected = recovery_block_sample_alternate_value(update.sample);
 
     const recovery_block_result_t result =
-        recovery_block_probe_update(&state, update);
+        recovery_block_sample_update(&state, update);
 
     CHECK(result.status == RECOVERY_BLOCK_ALTERNATE_ACCEPTED);
     CHECK(result.checkpoint_check == CHECKER_OK);
@@ -72,14 +72,14 @@ static void test_primary_range_failure_recovers_with_alternate(void) {
 static void test_primary_checksum_failure_recovers_with_alternate(void) {
     printf("Recovery block: primary checksum failure recovers with alternate\n");
     checkpoint_record_t state = checkpoint_record_init(clean_record());
-    const recovery_block_probe_update_t update = {
+    const recovery_block_sample_update_t update = {
         13,
-        RECOVERY_BLOCK_PROBE_FAULT_PRIMARY_CHECKSUM,
+        RECOVERY_BLOCK_SAMPLE_FAULT_PRIMARY_CHECKSUM,
     };
-    const uint32_t expected = recovery_block_probe_alternate_value(update.sample);
+    const uint32_t expected = recovery_block_sample_alternate_value(update.sample);
 
     const recovery_block_result_t result =
-        recovery_block_probe_update(&state, update);
+        recovery_block_sample_update(&state, update);
 
     CHECK(result.status == RECOVERY_BLOCK_ALTERNATE_ACCEPTED);
     CHECK(result.primary_check == CHECKER_ERR_INVALID_CHECKSUM);
@@ -92,14 +92,14 @@ static void test_primary_checksum_failure_recovers_with_alternate(void) {
 static void test_alternate_failure_is_unrecoverable_and_restores_checkpoint(void) {
     printf("Recovery block: alternate failure is unrecoverable and restores checkpoint\n");
     checkpoint_record_t state = checkpoint_record_init(clean_record());
-    const recovery_block_probe_update_t update = {
+    const recovery_block_sample_update_t update = {
         17,
-        RECOVERY_BLOCK_PROBE_FAULT_PRIMARY_RANGE |
-            RECOVERY_BLOCK_PROBE_FAULT_ALTERNATE_CHECKSUM,
+        RECOVERY_BLOCK_SAMPLE_FAULT_PRIMARY_RANGE |
+            RECOVERY_BLOCK_SAMPLE_FAULT_ALTERNATE_CHECKSUM,
     };
 
     const recovery_block_result_t result =
-        recovery_block_probe_update(&state, update);
+        recovery_block_sample_update(&state, update);
 
     CHECK(result.status == RECOVERY_BLOCK_UNRECOVERABLE);
     CHECK(result.primary_check == CHECKER_ERR_ABOVE_MAX);
@@ -114,13 +114,13 @@ static void test_invalid_entry_state_fails_before_primary_runs(void) {
     printf("Recovery block: invalid entry state fails before primary runs\n");
     checkpoint_record_t state = checkpoint_record_init(clean_record());
     state.active.length = 20;
-    const recovery_block_probe_update_t update = {
+    const recovery_block_sample_update_t update = {
         19,
-        RECOVERY_BLOCK_PROBE_FAULT_NONE,
+        RECOVERY_BLOCK_SAMPLE_FAULT_NONE,
     };
 
     const recovery_block_result_t result =
-        recovery_block_probe_update(&state, update);
+        recovery_block_sample_update(&state, update);
 
     CHECK(result.status == RECOVERY_BLOCK_CHECKPOINT_FAILED);
     CHECK(result.checkpoint_check == CHECKER_ERR_INVALID_LENGTH);
@@ -169,7 +169,7 @@ static void test_corrupted_checkpoint_reports_restore_failure(void) {
 
 int main(void) {
     test_status_codes_are_stable_abi_values();
-    test_probe_variants_compute_same_accepted_value();
+    test_sample_variants_compute_same_accepted_value();
     test_primary_success_commits_primary_result();
     test_primary_range_failure_recovers_with_alternate();
     test_primary_checksum_failure_recovers_with_alternate();

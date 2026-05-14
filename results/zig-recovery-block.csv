@@ -1,0 +1,11 @@
+technique,implementation,campaign,iteration,stage,fault_target,fault_value,initial_value,expected,status,recovery_status,checkpoint_check,primary_check,restore_check,alternate_check,value,active_value,checkpoint_value,passes,failures
+recovery-block,zig,mixed,1,11,0,0,129,154,0,0,0,0,0,0,154,154,154,1,0
+recovery-block,zig,mixed,2,11,20,4294967295,158,191,1,1,0,2,0,0,191,191,191,2,0
+recovery-block,zig,mixed,3,11,21,16,187,228,1,1,0,4,0,0,228,228,228,3,0
+recovery-block,zig,mixed,4,11,22,4294967295,216,265,2,2,0,2,0,4,216,216,216,4,0
+recovery-block,zig,mixed,5,11,23,4294967295,245,302,4,4,0,2,4,0,4294967295,4294967295,245,5,0
+recovery-block,zig,mixed,6,11,0,0,274,339,0,0,0,0,0,0,339,339,339,6,0
+recovery-block,zig,mixed,7,11,20,4294967295,303,376,1,1,0,2,0,0,376,376,376,7,0
+recovery-block,zig,mixed,8,11,21,16,332,413,1,1,0,4,0,0,413,413,413,8,0
+recovery-block,zig,mixed,9,11,22,4294967295,361,450,2,2,0,2,0,4,361,361,361,9,0
+recovery-block,zig,mixed,10,11,23,4294967295,390,487,4,4,0,2,4,0,4294967295,4294967295,390,10,0

@@ -25,17 +25,17 @@ typedef void (*recovery_block_operation_t)(checker_record_t *active, void *conte
 typedef void (*recovery_block_hook_t)(checkpoint_record_t *state, void *context);
 
 enum {
-    RECOVERY_BLOCK_PROBE_FAULT_NONE = 0u,
-    RECOVERY_BLOCK_PROBE_FAULT_PRIMARY_RANGE = 1u << 0,
-    RECOVERY_BLOCK_PROBE_FAULT_PRIMARY_CHECKSUM = 1u << 1,
-    RECOVERY_BLOCK_PROBE_FAULT_ALTERNATE_RANGE = 1u << 2,
-    RECOVERY_BLOCK_PROBE_FAULT_ALTERNATE_CHECKSUM = 1u << 3,
+    RECOVERY_BLOCK_SAMPLE_FAULT_NONE = 0u,
+    RECOVERY_BLOCK_SAMPLE_FAULT_PRIMARY_RANGE = 1u << 0,
+    RECOVERY_BLOCK_SAMPLE_FAULT_PRIMARY_CHECKSUM = 1u << 1,
+    RECOVERY_BLOCK_SAMPLE_FAULT_ALTERNATE_RANGE = 1u << 2,
+    RECOVERY_BLOCK_SAMPLE_FAULT_ALTERNATE_CHECKSUM = 1u << 3,
 };
 
 typedef struct {
     uint32_t sample;
     uint32_t faults;
-} recovery_block_probe_update_t;
+} recovery_block_sample_update_t;
 
 static inline uint32_t
 recovery_block_status_code(recovery_block_status_t status) {
@@ -119,12 +119,12 @@ static inline recovery_block_result_t recovery_block_run(
         context);
 }
 
-static inline uint32_t recovery_block_probe_primary_value(uint32_t sample) {
+static inline uint32_t recovery_block_sample_primary_value(uint32_t sample) {
     const uint32_t reduced = sample % 700u;
     return 100u + (((reduced * 37u) + 17u) % 700u);
 }
 
-static inline uint32_t recovery_block_probe_alternate_value(uint32_t sample) {
+static inline uint32_t recovery_block_sample_alternate_value(uint32_t sample) {
     const uint32_t reduced = sample % 700u;
     uint32_t acc = 17u;
 
@@ -136,52 +136,52 @@ static inline uint32_t recovery_block_probe_alternate_value(uint32_t sample) {
     return 100u + acc;
 }
 
-static inline void recovery_block_probe_set_above_range(checker_record_t *active) {
+static inline void recovery_block_sample_set_above_range(checker_record_t *active) {
     active->value = active->max + 1u;
     checker_record_refresh_checksum(active);
 }
 
-static inline void recovery_block_probe_primary(
+static inline void recovery_block_sample_primary(
     checker_record_t *active,
     void *context) {
-    const recovery_block_probe_update_t *update =
-        (const recovery_block_probe_update_t *)context;
+    const recovery_block_sample_update_t *update =
+        (const recovery_block_sample_update_t *)context;
 
-    active->value = recovery_block_probe_primary_value(update->sample);
+    active->value = recovery_block_sample_primary_value(update->sample);
     checker_record_refresh_checksum(active);
 
-    if ((update->faults & RECOVERY_BLOCK_PROBE_FAULT_PRIMARY_RANGE) != 0u) {
-        recovery_block_probe_set_above_range(active);
+    if ((update->faults & RECOVERY_BLOCK_SAMPLE_FAULT_PRIMARY_RANGE) != 0u) {
+        recovery_block_sample_set_above_range(active);
     }
-    if ((update->faults & RECOVERY_BLOCK_PROBE_FAULT_PRIMARY_CHECKSUM) != 0u) {
+    if ((update->faults & RECOVERY_BLOCK_SAMPLE_FAULT_PRIMARY_CHECKSUM) != 0u) {
         active->checksum ^= 0x10u;
     }
 }
 
-static inline void recovery_block_probe_alternate(
+static inline void recovery_block_sample_alternate(
     checker_record_t *active,
     void *context) {
-    const recovery_block_probe_update_t *update =
-        (const recovery_block_probe_update_t *)context;
+    const recovery_block_sample_update_t *update =
+        (const recovery_block_sample_update_t *)context;
 
-    active->value = recovery_block_probe_alternate_value(update->sample);
+    active->value = recovery_block_sample_alternate_value(update->sample);
     checker_record_refresh_checksum(active);
 
-    if ((update->faults & RECOVERY_BLOCK_PROBE_FAULT_ALTERNATE_RANGE) != 0u) {
-        recovery_block_probe_set_above_range(active);
+    if ((update->faults & RECOVERY_BLOCK_SAMPLE_FAULT_ALTERNATE_RANGE) != 0u) {
+        recovery_block_sample_set_above_range(active);
     }
-    if ((update->faults & RECOVERY_BLOCK_PROBE_FAULT_ALTERNATE_CHECKSUM) != 0u) {
+    if ((update->faults & RECOVERY_BLOCK_SAMPLE_FAULT_ALTERNATE_CHECKSUM) != 0u) {
         active->checksum ^= 0x10u;
     }
 }
 
-static inline recovery_block_result_t recovery_block_probe_update(
+static inline recovery_block_result_t recovery_block_sample_update(
     checkpoint_record_t *state,
-    recovery_block_probe_update_t update) {
+    recovery_block_sample_update_t update) {
     return recovery_block_run(
         state,
-        recovery_block_probe_primary,
-        recovery_block_probe_alternate,
+        recovery_block_sample_primary,
+        recovery_block_sample_alternate,
         &update);
 }
 

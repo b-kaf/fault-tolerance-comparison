@@ -10,6 +10,9 @@ from typing import Callable
 from injector.gdbmi import GdbMi
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+HARNESS_OUTPUT_DIR = REPO_ROOT / "zig-out" / "harness"
+
 FAULT_NONE = 0
 FAULT_COPY_A = 1
 FAULT_ALL_DISTINCT = 2
@@ -41,28 +44,28 @@ TMR_CAMPAIGNS: dict[str, Callable[[int], tuple[int, int]]] = {
 TMR_MIXED_ORDER: tuple[str, ...] = ("none", "single-a", "all-distinct")
 
 # Checkpoint faults are independent of iteration/expected, so a static map.
-# Any campaign not listed here (e.g. "mixed", "probe-mixed-radiation") rotates
-# through CHECKPOINT_MIXED_ORDER per iteration.
+# Any campaign not listed here (e.g. "mixed", "checkpoint-mixed-faults")
+# rotates through CHECKPOINT_MIXED_ORDER per iteration.
 CHECKPOINT_CAMPAIGNS: dict[str, tuple[int, int]] = {
-    "none":                           (FAULT_NONE, 0),
-    "probe-clean-cruise":             (FAULT_NONE, 0),
-    "probe-active-bitflip":           (FAULT_ACTIVE_VALUE, 0xFFFFFFFF),
-    "probe-telemetry-length-corrupt": (FAULT_ACTIVE_LENGTH, 0xFFFFFFFF),
-    "probe-active-checksum-corrupt":  (FAULT_ACTIVE_CHECKSUM, 0x10),
-    "probe-stale-checkpoint":         (FAULT_CHECKPOINT_CHECKSUM, 0x10),
-    "probe-double-corruption":        (FAULT_ACTIVE_VALUE_AND_CHECKPOINT_CHECKSUM, 0xFFFFFFFF),
+    "none":                                (FAULT_NONE, 0),
+    "checkpoint-clean-run":                (FAULT_NONE, 0),
+    "checkpoint-active-value-fault":       (FAULT_ACTIVE_VALUE, 0xFFFFFFFF),
+    "checkpoint-active-length-fault":      (FAULT_ACTIVE_LENGTH, 0xFFFFFFFF),
+    "checkpoint-active-checksum-fault":    (FAULT_ACTIVE_CHECKSUM, 0x10),
+    "checkpoint-saved-checksum-fault":     (FAULT_CHECKPOINT_CHECKSUM, 0x10),
+    "checkpoint-double-fault":             (FAULT_ACTIVE_VALUE_AND_CHECKPOINT_CHECKSUM, 0xFFFFFFFF),
 }
 CHECKPOINT_MIXED_ORDER: tuple[str, ...] = (
     "none",
-    "probe-active-bitflip",
-    "probe-telemetry-length-corrupt",
-    "probe-active-checksum-corrupt",
-    "probe-stale-checkpoint",
-    "probe-double-corruption",
+    "checkpoint-active-value-fault",
+    "checkpoint-active-length-fault",
+    "checkpoint-active-checksum-fault",
+    "checkpoint-saved-checksum-fault",
+    "checkpoint-double-fault",
 )
-CHECKPOINT_PROBE_CHOICES: tuple[str, ...] = tuple(
-    name for name in CHECKPOINT_CAMPAIGNS if name.startswith("probe-")
-) + ("probe-mixed-radiation",)
+CHECKPOINT_SAMPLE_CHOICES: tuple[str, ...] = tuple(
+    name for name in CHECKPOINT_CAMPAIGNS if name.startswith("checkpoint-")
+) + ("checkpoint-mixed-faults",)
 
 # Recovery-block campaigns inject after the primary result and before the
 # acceptance test. Compound faults keep the primary rejection explicit so the
@@ -84,7 +87,7 @@ RECOVERY_BLOCK_MIXED_ORDER: tuple[str, ...] = (
 )
 RECOVERY_BLOCK_CHOICES: tuple[str, ...] = tuple(
     name for name in RECOVERY_BLOCK_CAMPAIGNS if name.startswith("recovery-")
-) + ("recovery-mixed-radiation",)
+) + ("recovery-mixed-faults",)
 
 CONTROL_FLOW_CAMPAIGNS: dict[str, tuple[int, int]] = {
     "none":                       (FAULT_NONE, 0),
@@ -105,7 +108,11 @@ CONTROL_FLOW_MIXED_ORDER: tuple[str, ...] = (
 )
 CONTROL_FLOW_CHOICES: tuple[str, ...] = tuple(
     name for name in CONTROL_FLOW_CAMPAIGNS if name.startswith("control-")
-) + ("control-mixed-radiation",)
+) + ("control-mixed-faults",)
+
+
+def harness_elf_path(technique: str, language: str) -> Path:
+    return HARNESS_OUTPUT_DIR / f"{technique}-harness-{language}-m4.elf"
 
 
 def qemu_command(args: argparse.Namespace) -> list[str]:
@@ -166,15 +173,6 @@ def wait_for_gdb_port(
         f"QEMU did not open GDB port {host}:{port} within {timeout:.1f}s")
 
 
-def infer_implementation(elf: Path) -> str:
-    name = elf.name.lower()
-    if "zig" in name:
-        return "zig"
-    if "-c-" in name or name.startswith("c-") or name.endswith("-c-m4.elf"):
-        return "c"
-    return "unknown"
-
-
 def choose_tmr_fault(campaign: str, iteration: int, expected: int) -> tuple[int, int]:
     chooser = TMR_CAMPAIGNS.get(campaign)
     if chooser is not None:
@@ -220,7 +218,7 @@ def run_campaign(args: argparse.Namespace) -> int:
 def run_tmr_campaign(args: argparse.Namespace) -> int:
     qemu = start_qemu(args) if args.launch_qemu else None
     rows = []
-    implementation = infer_implementation(args.elf)
+    implementation = args.language
 
     try:
         gdb = GdbMi(args)
@@ -272,7 +270,7 @@ def run_tmr_campaign(args: argparse.Namespace) -> int:
 def run_checkpoint_campaign(args: argparse.Namespace) -> int:
     qemu = start_qemu(args) if args.launch_qemu else None
     rows = []
-    implementation = infer_implementation(args.elf)
+    implementation = args.language
 
     try:
         gdb = GdbMi(args)
@@ -329,7 +327,7 @@ def run_checkpoint_campaign(args: argparse.Namespace) -> int:
 def run_recovery_block_campaign(args: argparse.Namespace) -> int:
     qemu = start_qemu(args) if args.launch_qemu else None
     rows = []
-    implementation = infer_implementation(args.elf)
+    implementation = args.language
 
     try:
         gdb = GdbMi(args)
@@ -388,7 +386,7 @@ def run_recovery_block_campaign(args: argparse.Namespace) -> int:
 def run_control_flow_campaign(args: argparse.Namespace) -> int:
     qemu = start_qemu(args) if args.launch_qemu else None
     rows = []
-    implementation = infer_implementation(args.elf)
+    implementation = args.language
 
     try:
         gdb = GdbMi(args)
@@ -490,8 +488,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run QEMU/GDB-RSP fault-injection campaigns against harness firmware.",
     )
-    parser.add_argument("--elf", type=Path, required=True,
-                        help="Harness ELF built by `zig build harness`.")
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument(
         "--technique",
@@ -500,13 +496,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Harness technique ABI to drive.",
     )
     parser.add_argument(
+        "--language",
+        choices=("c", "zig"),
+        required=True,
+        help="Harness implementation language. The ELF path is inferred from this and --technique.",
+    )
+    parser.add_argument(
         "--campaign",
         choices=(
             "mixed",
             "none",
             "single-a",
             "all-distinct",
-            *CHECKPOINT_PROBE_CHOICES,
+            *CHECKPOINT_SAMPLE_CHOICES,
             *RECOVERY_BLOCK_CHOICES,
             *CONTROL_FLOW_CHOICES,
         ),
@@ -531,11 +533,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
 
     if args.technique == "tmr" and (
-        args.campaign in CHECKPOINT_PROBE_CHOICES
+        args.campaign in CHECKPOINT_SAMPLE_CHOICES
         or args.campaign in RECOVERY_BLOCK_CHOICES
         or args.campaign in CONTROL_FLOW_CHOICES
     ):
-        parser.error("probe-* campaigns require --technique checkpoint; "
+        parser.error("checkpoint-* campaigns require --technique checkpoint; "
                      "recovery-* campaigns require --technique recovery-block; "
                      "control-* campaigns require --technique control-flow")
     if args.technique == "checkpoint" and (
@@ -548,20 +550,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                      "control-* campaigns require --technique control-flow")
     if args.technique == "recovery-block" and (
         args.campaign in ("single-a", "all-distinct")
-        or args.campaign in CHECKPOINT_PROBE_CHOICES
+        or args.campaign in CHECKPOINT_SAMPLE_CHOICES
         or args.campaign in CONTROL_FLOW_CHOICES
     ):
         parser.error("single-a/all-distinct campaigns require --technique tmr; "
-                     "probe-* campaigns require --technique checkpoint; "
+                     "checkpoint-* campaigns require --technique checkpoint; "
                      "control-* campaigns require --technique control-flow")
     if args.technique == "control-flow" and (
         args.campaign in ("single-a", "all-distinct")
-        or args.campaign in CHECKPOINT_PROBE_CHOICES
+        or args.campaign in CHECKPOINT_SAMPLE_CHOICES
         or args.campaign in RECOVERY_BLOCK_CHOICES
     ):
         parser.error("single-a/all-distinct campaigns require --technique tmr; "
-                     "probe-* campaigns require --technique checkpoint; "
+                     "checkpoint-* campaigns require --technique checkpoint; "
                      "recovery-* campaigns require --technique recovery-block")
+
+    args.elf = harness_elf_path(args.technique, args.language)
+    if not args.elf.is_file():
+        parser.error(f"inferred ELF not found: {args.elf} "
+                     "(run `zig build harness` first)")
 
     return args
 

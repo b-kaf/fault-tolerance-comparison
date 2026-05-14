@@ -22,7 +22,7 @@ pub const Result = struct {
     alternate_check: checker.CheckStatus,
 };
 
-pub const probe_fault = struct {
+pub const sample_fault = struct {
     pub const none: u32 = 0;
     pub const primary_range: u32 = 1 << 0;
     pub const primary_checksum: u32 = 1 << 1;
@@ -30,7 +30,7 @@ pub const probe_fault = struct {
     pub const alternate_checksum: u32 = 1 << 3;
 };
 
-pub const ProbeUpdate = struct {
+pub const SampleUpdate = struct {
     sample: u32,
     faults: u32,
 };
@@ -105,12 +105,12 @@ pub fn runWithHooks(
     return result;
 }
 
-pub fn probePrimaryValue(sample: u32) u32 {
+pub fn samplePrimaryValue(sample: u32) u32 {
     const reduced = sample % 700;
     return 100 + (((reduced * 37) + 17) % 700);
 }
 
-pub fn probeAlternateValue(sample: u32) u32 {
+pub fn sampleAlternateValue(sample: u32) u32 {
     const reduced = sample % 700;
     var acc: u32 = 17;
     var i: u32 = 0;
@@ -128,35 +128,35 @@ fn setAboveRange(active: *checker.CheckedRecord) void {
     active.refreshChecksum();
 }
 
-pub fn probePrimary(active: *checker.CheckedRecord, update: *const ProbeUpdate) void {
-    active.value = probePrimaryValue(update.sample);
+pub fn samplePrimary(active: *checker.CheckedRecord, update: *const SampleUpdate) void {
+    active.value = samplePrimaryValue(update.sample);
     active.refreshChecksum();
 
-    if ((update.faults & probe_fault.primary_range) != 0) {
+    if ((update.faults & sample_fault.primary_range) != 0) {
         setAboveRange(active);
     }
-    if ((update.faults & probe_fault.primary_checksum) != 0) {
+    if ((update.faults & sample_fault.primary_checksum) != 0) {
         active.checksum ^= 0x10;
     }
 }
 
-pub fn probeAlternate(active: *checker.CheckedRecord, update: *const ProbeUpdate) void {
-    active.value = probeAlternateValue(update.sample);
+pub fn sampleAlternate(active: *checker.CheckedRecord, update: *const SampleUpdate) void {
+    active.value = sampleAlternateValue(update.sample);
     active.refreshChecksum();
 
-    if ((update.faults & probe_fault.alternate_range) != 0) {
+    if ((update.faults & sample_fault.alternate_range) != 0) {
         setAboveRange(active);
     }
-    if ((update.faults & probe_fault.alternate_checksum) != 0) {
+    if ((update.faults & sample_fault.alternate_checksum) != 0) {
         active.checksum ^= 0x10;
     }
 }
 
-pub fn runProbeUpdate(
+pub fn runSampleUpdate(
     state: *checkpoint.CheckpointedRecord,
-    update: ProbeUpdate,
+    update: SampleUpdate,
 ) Result {
-    return run(state, &update, probePrimary, probeAlternate);
+    return run(state, &update, samplePrimary, sampleAlternate);
 }
 
 fn cleanRecord() checker.CheckedRecord {
@@ -171,19 +171,19 @@ test "recovery block: status codes are stable ABI values" {
     try std.testing.expectEqual(@as(u32, 4), RecoveryStatus.restore_failed.code());
 }
 
-test "recovery block: probe variants compute same accepted value" {
+test "recovery block: sample variants compute same accepted value" {
     var sample: u32 = 0;
     while (sample < 2000) : (sample += 137) {
-        try std.testing.expectEqual(probePrimaryValue(sample), probeAlternateValue(sample));
+        try std.testing.expectEqual(samplePrimaryValue(sample), sampleAlternateValue(sample));
     }
 }
 
 test "recovery block: primary success commits primary result" {
     var state = checkpoint.CheckpointedRecord.init(cleanRecord());
-    const update = ProbeUpdate{ .sample = 7, .faults = probe_fault.none };
-    const expected = probePrimaryValue(update.sample);
+    const update = SampleUpdate{ .sample = 7, .faults = sample_fault.none };
+    const expected = samplePrimaryValue(update.sample);
 
-    const result = runProbeUpdate(&state, update);
+    const result = runSampleUpdate(&state, update);
 
     try std.testing.expectEqual(RecoveryStatus.primary_accepted, result.status);
     try std.testing.expectEqual(checker.CheckStatus.ok, result.checkpoint_check);
@@ -198,10 +198,10 @@ test "recovery block: primary success commits primary result" {
 
 test "recovery block: primary range failure recovers with alternate" {
     var state = checkpoint.CheckpointedRecord.init(cleanRecord());
-    const update = ProbeUpdate{ .sample = 11, .faults = probe_fault.primary_range };
-    const expected = probeAlternateValue(update.sample);
+    const update = SampleUpdate{ .sample = 11, .faults = sample_fault.primary_range };
+    const expected = sampleAlternateValue(update.sample);
 
-    const result = runProbeUpdate(&state, update);
+    const result = runSampleUpdate(&state, update);
 
     try std.testing.expectEqual(RecoveryStatus.alternate_accepted, result.status);
     try std.testing.expectEqual(checker.CheckStatus.ok, result.checkpoint_check);
@@ -215,10 +215,10 @@ test "recovery block: primary range failure recovers with alternate" {
 
 test "recovery block: primary checksum failure recovers with alternate" {
     var state = checkpoint.CheckpointedRecord.init(cleanRecord());
-    const update = ProbeUpdate{ .sample = 13, .faults = probe_fault.primary_checksum };
-    const expected = probeAlternateValue(update.sample);
+    const update = SampleUpdate{ .sample = 13, .faults = sample_fault.primary_checksum };
+    const expected = sampleAlternateValue(update.sample);
 
-    const result = runProbeUpdate(&state, update);
+    const result = runSampleUpdate(&state, update);
 
     try std.testing.expectEqual(RecoveryStatus.alternate_accepted, result.status);
     try std.testing.expectEqual(checker.CheckStatus.invalid_checksum, result.primary_check);
@@ -230,12 +230,12 @@ test "recovery block: primary checksum failure recovers with alternate" {
 
 test "recovery block: alternate failure is unrecoverable and restores checkpoint" {
     var state = checkpoint.CheckpointedRecord.init(cleanRecord());
-    const update = ProbeUpdate{
+    const update = SampleUpdate{
         .sample = 17,
-        .faults = probe_fault.primary_range | probe_fault.alternate_checksum,
+        .faults = sample_fault.primary_range | sample_fault.alternate_checksum,
     };
 
-    const result = runProbeUpdate(&state, update);
+    const result = runSampleUpdate(&state, update);
 
     try std.testing.expectEqual(RecoveryStatus.unrecoverable, result.status);
     try std.testing.expectEqual(checker.CheckStatus.above_max, result.primary_check);
@@ -249,9 +249,9 @@ test "recovery block: alternate failure is unrecoverable and restores checkpoint
 test "recovery block: invalid entry state fails before primary runs" {
     var state = checkpoint.CheckpointedRecord.init(cleanRecord());
     state.active.length = 20;
-    const update = ProbeUpdate{ .sample = 19, .faults = probe_fault.none };
+    const update = SampleUpdate{ .sample = 19, .faults = sample_fault.none };
 
-    const result = runProbeUpdate(&state, update);
+    const result = runSampleUpdate(&state, update);
 
     try std.testing.expectEqual(RecoveryStatus.checkpoint_failed, result.status);
     try std.testing.expectEqual(checker.CheckStatus.invalid_length, result.checkpoint_check);

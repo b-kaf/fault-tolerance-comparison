@@ -28,15 +28,15 @@ volatile uint32_t harness_failures;
 volatile uint32_t harness_last_fault_target;
 volatile checkpoint_record_t harness_c_checkpoint_state;
 
-static uint32_t probe_initial_value(uint32_t iteration) {
+static uint32_t sample_initial_value(uint32_t iteration) {
     return 100u + ((iteration * 37u) % 700u);
 }
 
-static uint32_t probe_updated_value(uint32_t iteration) {
+static uint32_t sample_updated_value(uint32_t iteration) {
     return 100u + ((iteration * 53u + 211u) % 700u);
 }
 
-static checker_record_t probe_record(uint32_t value) {
+static checker_record_t sample_record(uint32_t value) {
     return checker_record_init(
         CHECKER_TAG_SAMPLE,
         value,
@@ -169,9 +169,9 @@ void harness_main(void) {
 
     for (;;) {
         const uint32_t iteration = harness_iteration + 1u;
-        const uint32_t initial = probe_initial_value(iteration);
-        const uint32_t expected = probe_updated_value(iteration);
-        const checker_record_t record = probe_record(initial);
+        const uint32_t initial = sample_initial_value(iteration);
+        const uint32_t expected = sample_updated_value(iteration);
+        const checker_record_t record = sample_record(initial);
         checkpoint_restart_result_t result;
 
         harness_iteration = iteration;

@@ -52,11 +52,11 @@ fn store(ptr: *volatile u32, value: u32) void {
     ptr.* = value;
 }
 
-fn probeInitialValue(iteration: u32) u32 {
+fn sampleInitialValue(iteration: u32) u32 {
     return 100 + ((iteration *% 29) % 700);
 }
 
-fn probeRecord(value: u32) checker.CheckedRecord {
+fn sampleRecord(value: u32) checker.CheckedRecord {
     return checker.CheckedRecord.init(
         .sample,
         value,
@@ -92,7 +92,7 @@ fn setPrimaryValueFault(state: *checkpoint.CheckpointedRecord) void {
 
 fn applyAfterPrimaryFault(
     state: *checkpoint.CheckpointedRecord,
-    _: *const recovery_block.ProbeUpdate,
+    _: *const recovery_block.SampleUpdate,
 ) void {
     store(&harness_stage, abi.stage.after_primary);
 
@@ -113,7 +113,7 @@ fn applyAfterPrimaryFault(
 
 fn applyAfterAlternateFault(
     state: *checkpoint.CheckpointedRecord,
-    _: *const recovery_block.ProbeUpdate,
+    _: *const recovery_block.SampleUpdate,
 ) void {
     store(&harness_stage, abi.stage.after_alternate);
 
@@ -222,13 +222,13 @@ export fn harness_main() callconv(.c) noreturn {
 
     while (true) {
         const iteration = load(&harness_iteration) +% 1;
-        const initial = probeInitialValue(iteration);
-        const expected = recovery_block.probePrimaryValue(iteration);
-        var update = recovery_block.ProbeUpdate{
+        const initial = sampleInitialValue(iteration);
+        const expected = recovery_block.samplePrimaryValue(iteration);
+        var update = recovery_block.SampleUpdate{
             .sample = iteration,
-            .faults = recovery_block.probe_fault.none,
+            .faults = recovery_block.sample_fault.none,
         };
-        var state = checkpoint.CheckpointedRecord.init(probeRecord(initial));
+        var state = checkpoint.CheckpointedRecord.init(sampleRecord(initial));
 
         store(&harness_iteration, iteration);
         store(&harness_last_initial_value, initial);
@@ -250,9 +250,9 @@ export fn harness_main() callconv(.c) noreturn {
         const result = recovery_block.runWithHooks(
             &state,
             &update,
-            recovery_block.probePrimary,
+            recovery_block.samplePrimary,
             applyAfterPrimaryFault,
-            recovery_block.probeAlternate,
+            recovery_block.sampleAlternate,
             applyAfterAlternateFault,
         );
 

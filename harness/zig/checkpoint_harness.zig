@@ -40,7 +40,7 @@ export var harness_zig_checkpoint_tag: u32 = 0;
 export var harness_zig_checkpoint_length: u32 = 0;
 export var harness_zig_checkpoint_checksum: u32 = 0;
 
-fn load(ptr: *volatile const u32) u32 {
+fn load(ptr: *const volatile u32) u32 {
     return ptr.*;
 }
 
@@ -48,15 +48,15 @@ fn store(ptr: *volatile u32, value: u32) void {
     ptr.* = value;
 }
 
-fn probeInitialValue(iteration: u32) u32 {
+fn sampleInitialValue(iteration: u32) u32 {
     return 100 + ((iteration *% 37) % 700);
 }
 
-fn probeUpdatedValue(iteration: u32) u32 {
+fn sampleUpdatedValue(iteration: u32) u32 {
     return 100 + (((iteration *% 53) +% 211) % 700);
 }
 
-fn probeRecord(value: u32) checker.CheckedRecord {
+fn sampleRecord(value: u32) checker.CheckedRecord {
     return checker.CheckedRecord.init(
         .sample,
         value,
@@ -193,9 +193,9 @@ export fn harness_main() callconv(.c) noreturn {
 
     while (true) {
         const iteration = load(&harness_iteration) +% 1;
-        const initial = probeInitialValue(iteration);
-        const expected = probeUpdatedValue(iteration);
-        var state = checkpoint.CheckpointedRecord.init(probeRecord(initial));
+        const initial = sampleInitialValue(iteration);
+        const expected = sampleUpdatedValue(iteration);
+        var state = checkpoint.CheckpointedRecord.init(sampleRecord(initial));
 
         store(&harness_iteration, iteration);
         store(&harness_last_initial_value, initial);

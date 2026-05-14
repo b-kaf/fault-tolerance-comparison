@@ -12,8 +12,8 @@ Run a mixed campaign against the C implementation:
 ```sh
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/tmr-harness-c-m4.elf \
   --technique tmr \
+  --language c \
   --iterations 20
 ```
 
@@ -22,26 +22,26 @@ Run against the Zig implementation:
 ```sh
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/tmr-harness-zig-m4.elf \
   --technique tmr \
+  --language zig \
   --iterations 20
 ```
 
-Run a probe-themed checkpoint/restart campaign:
+Run a checkpoint/restart campaign:
 
 ```sh
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/checkpoint-harness-c-m4.elf \
   --technique checkpoint \
-  --campaign probe-mixed-radiation \
+  --language c \
+  --campaign checkpoint-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/checkpoint-harness-zig-m4.elf \
   --technique checkpoint \
-  --campaign probe-mixed-radiation \
+  --language zig \
+  --campaign checkpoint-mixed-faults \
   --iterations 20
 ```
 
@@ -50,16 +50,16 @@ Run a recovery-block campaign:
 ```sh
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/recovery-block-harness-c-m4.elf \
   --technique recovery-block \
-  --campaign recovery-mixed-radiation \
+  --language c \
+  --campaign recovery-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/recovery-block-harness-zig-m4.elf \
   --technique recovery-block \
-  --campaign recovery-mixed-radiation \
+  --language zig \
+  --campaign recovery-mixed-faults \
   --iterations 20
 ```
 
@@ -68,30 +68,32 @@ Run a control-flow checking campaign:
 ```sh
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/control-flow-harness-c-m4.elf \
   --technique control-flow \
-  --campaign control-mixed-radiation \
+  --language c \
+  --campaign control-mixed-faults \
   --iterations 20
 
 uv run python main.py \
   --launch-qemu \
-  --elf ../../zig-out/harness/control-flow-harness-zig-m4.elf \
   --technique control-flow \
-  --campaign control-mixed-radiation \
+  --language zig \
+  --campaign control-mixed-faults \
   --iterations 20
 ```
 
 Use `--csv <path>` to save campaign output.
+The injector infers the ELF path as
+`zig-out/harness/<technique>-harness-<language>-m4.elf`.
 
 Checkpoint campaigns:
 
-- `probe-clean-cruise`
-- `probe-active-bitflip`
-- `probe-telemetry-length-corrupt`
-- `probe-active-checksum-corrupt`
-- `probe-stale-checkpoint`
-- `probe-double-corruption`
-- `probe-mixed-radiation`
+- `checkpoint-clean-run`
+- `checkpoint-active-value-fault`
+- `checkpoint-active-length-fault`
+- `checkpoint-active-checksum-fault`
+- `checkpoint-saved-checksum-fault`
+- `checkpoint-double-fault`
+- `checkpoint-mixed-faults`
 
 Recovery-block campaigns:
 
@@ -100,7 +102,7 @@ Recovery-block campaigns:
 - `recovery-primary-checksum`
 - `recovery-alternate-checksum`
 - `recovery-restore-failure`
-- `recovery-mixed-radiation`
+- `recovery-mixed-faults`
 
 Control-flow campaigns:
 
@@ -110,4 +112,4 @@ Control-flow campaigns:
 - `control-skip-compute`
 - `control-repeat-read`
 - `control-early-terminal`
-- `control-mixed-radiation`
+- `control-mixed-faults`

@@ -34,11 +34,11 @@ volatile uint32_t harness_failures;
 volatile uint32_t harness_last_fault_target;
 volatile checkpoint_record_t harness_c_recovery_block_state;
 
-static uint32_t probe_initial_value(uint32_t iteration) {
+static uint32_t sample_initial_value(uint32_t iteration) {
     return 100u + ((iteration * 29u) % 700u);
 }
 
-static checker_record_t probe_record(uint32_t value) {
+static checker_record_t sample_record(uint32_t value) {
     return checker_record_init(
         CHECKER_TAG_SAMPLE,
         value,
@@ -197,12 +197,12 @@ void harness_main(void) {
 
     for (;;) {
         const uint32_t iteration = harness_iteration + 1u;
-        const uint32_t initial = probe_initial_value(iteration);
-        const uint32_t expected = recovery_block_probe_primary_value(iteration);
-        const checker_record_t record = probe_record(initial);
-        recovery_block_probe_update_t update = {
+        const uint32_t initial = sample_initial_value(iteration);
+        const uint32_t expected = recovery_block_sample_primary_value(iteration);
+        const checker_record_t record = sample_record(initial);
+        recovery_block_sample_update_t update = {
             iteration,
-            RECOVERY_BLOCK_PROBE_FAULT_NONE,
+            RECOVERY_BLOCK_SAMPLE_FAULT_NONE,
         };
         recovery_block_result_t result;
 
@@ -226,9 +226,9 @@ void harness_main(void) {
         harness_last_fault_target = harness_fault_target;
         result = recovery_block_run_with_hooks(
             (checkpoint_record_t *)&harness_c_recovery_block_state,
-            recovery_block_probe_primary,
+            recovery_block_sample_primary,
             apply_after_primary_fault,
-            recovery_block_probe_alternate,
+            recovery_block_sample_alternate,
             apply_after_alternate_fault,
             &update);
 
