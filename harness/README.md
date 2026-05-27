@@ -110,6 +110,41 @@ The `<elf>` path is inferred as
 endpoint, places breakpoints on the exported injection hooks, writes the
 fault-control globals, and records the result counters exposed by the firmware.
 
+## Run A QEMU TCG Plugin Fuzz Campaign
+
+The QEMU TCG plugin runner is separate from the GDB/RSP injector. From the
+devenv shell:
+
+```sh
+harness-fuzz-campaign c tmr
+harness-fuzz-campaign zig tmr reg-bitflip-window 0x1234
+harness-fuzz-campaign c checkpoint ram-symbol-bitflip 0x1234
+```
+
+The helper takes:
+
+```sh
+harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> \
+  [none|abi-none|abi-mixed|ram-symbol-bitflip|reg-bitflip-window] [seed]
+```
+
+It builds the harness firmware, uses the Nix-built `qemu-ft-fuzz.so` plugin,
+and writes CSV output under `results/qemu-ft-fuzz/`. `abi-mixed` is the default
+campaign and mirrors the deterministic firmware ABI faults used by
+`harness-campaign`. `ram-symbol-bitflip` currently has allowlisted RAM state
+symbols for the C TMR, checkpoint, and recovery-block harnesses.
+
+The runner can also be called directly:
+
+```sh
+QEMU_FT_FUZZ_PLUGIN=/path/to/qemu-ft-fuzz.so \
+  uv run --directory harness/qemu_fuzz python main.py \
+    --technique tmr \
+    --language c \
+    --campaign abi-mixed \
+    --iterations 20
+```
+
 ## Firmware ABI
 
 Each TMR image runs forever. Every loop iteration:

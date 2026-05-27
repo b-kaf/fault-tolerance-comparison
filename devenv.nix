@@ -6,6 +6,9 @@
   ...
 }:
 
+let
+  qemuFtFuzzPlugin = pkgs.callPackage ./nix/qemu-ft-fuzz-plugin.nix { };
+in
 {
 
   # https://devenv.sh/packages/
@@ -16,6 +19,7 @@
     pkgs.llvmPackages.bintools
     pkgs.qemu
     pkgs.uv
+    qemuFtFuzzPlugin
   ];
 
   # https://devenv.sh/languages/
@@ -52,6 +56,29 @@
       --technique "$technique" \
       --campaign mixed \
       --iterations 10
+  '';
+  scripts.harness-fuzz-campaign.exec = ''
+    set -eu
+
+    language="''${1:-}"
+    technique="''${2:-}"
+    campaign="''${3:-abi-mixed}"
+    seed="''${4:-0xC0DEC0DE}"
+
+    if [ -z "$language" ] || [ -z "$technique" ]; then
+      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|abi-none|abi-mixed|ram-symbol-bitflip|reg-bitflip-window] [seed]" >&2
+      exit 2
+    fi
+
+    zig build harness
+
+    QEMU_FT_FUZZ_PLUGIN="${qemuFtFuzzPlugin}/lib/qemu-ft-fuzz.so" \
+      uv run --directory harness/qemu_fuzz python main.py \
+        --language "$language" \
+        --technique "$technique" \
+        --campaign "$campaign" \
+        --seed "$seed" \
+        --iterations "''${ITERATIONS:-20}"
   '';
   scripts.harness-asm.exec = ''
     set -eu

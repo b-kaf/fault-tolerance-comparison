@@ -1,0 +1,6 @@
+[project]
+name = "qemu-fuzz"
+version = "0.1.0"
+description = "QEMU TCG plugin fuzz runner for the Cortex-M4 fault-tolerance harnesses"
+requires-python = ">=3.11"
+dependencies = []

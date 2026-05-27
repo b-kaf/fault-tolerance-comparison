@@ -23,6 +23,9 @@ zig-out/
 /build-*/
 /docgen_tmp/
 /designs/
+/result
+/result-*
+/results/qemu-ft-fuzz/
 
 # C
 
