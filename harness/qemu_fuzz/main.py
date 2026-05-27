@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -20,8 +21,12 @@ from symbols import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+HARNESS_DIR = REPO_ROOT / "harness"
 HARNESS_OUTPUT_DIR = REPO_ROOT / "zig-out" / "harness"
 DEFAULT_RESULTS_DIR = REPO_ROOT / "results" / "qemu-ft-fuzz"
+sys.path.insert(0, str(HARNESS_DIR))
+
+from result_format import rewrite_result_csv
 
 
 def harness_elf_path(technique: str, language: str) -> Path:
@@ -108,6 +113,7 @@ def run(args: argparse.Namespace) -> int:
         tmp_path = Path(tmp)
         manifest_path = args.manifest or (tmp_path / "manifest.txt")
         done_path = args.done_file or (tmp_path / "done")
+        raw_csv_path = tmp_path / "raw.csv"
         if done_path.exists():
             done_path.unlink()
         if manifest_path.parent:
@@ -122,7 +128,7 @@ def run(args: argparse.Namespace) -> int:
             campaign=args.campaign,
             seed=args.seed,
             iterations=args.iterations,
-            csv=args.csv.resolve(),
+            csv=raw_csv_path.resolve(),
             done=done_path.resolve(),
             start_pc=symbols[start_hook].address,
             end_pc=symbols[end_hook].address,
@@ -140,6 +146,7 @@ def run(args: argparse.Namespace) -> int:
             done=done_path,
             timeout=args.timeout,
         )
+        rewrite_result_csv(raw_csv_path, args.csv)
 
     failures = last_failures(args.csv)
     print(f"wrote {args.csv} (last failures={failures})")

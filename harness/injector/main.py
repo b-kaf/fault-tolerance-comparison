@@ -1,5 +1,4 @@
 import argparse
-import csv
 import socket
 import subprocess
 import sys
@@ -12,6 +11,10 @@ from injector.gdbmi import GdbMi
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HARNESS_OUTPUT_DIR = REPO_ROOT / "zig-out" / "harness"
+HARNESS_DIR = REPO_ROOT / "harness"
+sys.path.insert(0, str(HARNESS_DIR))
+
+from result_format import write_result_csv
 
 FAULT_NONE = 0
 FAULT_COPY_A = 1
@@ -440,48 +443,7 @@ def run_control_flow_campaign(args: argparse.Namespace) -> int:
 
 
 def write_rows(path: Path | None, rows: list[dict[str, object]]) -> None:
-    preferred_fieldnames = [
-        "technique",
-        "implementation",
-        "campaign",
-        "iteration",
-        "stage",
-        "fault_target",
-        "fault_value",
-        "initial_value",
-        "expected",
-        "status",
-        "restart_status",
-        "recovery_status",
-        "control_status",
-        "terminal_status",
-        "active_check",
-        "checkpoint_check",
-        "primary_check",
-        "restore_check",
-        "alternate_check",
-        "phase",
-        "signature",
-        "transitions",
-        "value",
-        "active_value",
-        "checkpoint_value",
-        "passes",
-        "failures",
-    ]
-    fieldnames = [
-        field for field in preferred_fieldnames
-        if any(field in row for row in rows)
-    ]
-    output = open(path, "w", newline="",
-                  encoding="utf-8") if path else sys.stdout
-    try:
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-    finally:
-        if path:
-            output.close()
+    write_result_csv(path, rows)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

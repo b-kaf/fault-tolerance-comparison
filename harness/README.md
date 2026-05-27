@@ -134,6 +134,13 @@ campaign and mirrors the deterministic firmware ABI faults used by
 `harness-campaign`. `ram-symbol-bitflip` currently has allowlisted RAM state
 symbols for the C TMR, checkpoint, and recovery-block harnesses.
 
+Both the GDB/RSP and QEMU plugin runners write interpreted CSVs. Each row has a
+per-iteration `result`, `pass_delta`, and `failure_delta`, plus human-readable
+labels such as `stage_name`, `fault_name`, `recovery_status_name`, and
+`*_check_name` next to the raw ABI values. Plugin fuzz rows add seed and
+injection details such as `fault_mode`, `target_kind`, `target_name`,
+`inject_pc`, `bit`, `before`, and `after`.
+
 The runner can also be called directly:
 
 ```sh
