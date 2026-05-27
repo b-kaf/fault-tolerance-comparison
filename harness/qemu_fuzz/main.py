@@ -54,7 +54,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
     )
     parser.add_argument("--language", choices=("c", "zig"), required=True)
-    parser.add_argument("--campaign", choices=CAMPAIGN_CHOICES, default="abi-mixed")
+    parser.add_argument("--campaign", choices=CAMPAIGN_CHOICES, default="reg-bitflip-window")
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--seed", type=parse_seed, default=0xC0DEC0DE)
     parser.add_argument("--csv", type=Path)

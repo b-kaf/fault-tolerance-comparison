@@ -24,8 +24,6 @@ typedef enum {
 
 typedef enum {
     MODE_NONE,
-    MODE_ABI_NONE,
-    MODE_ABI_MIXED,
     MODE_RAM_SYMBOL_BITFLIP,
     MODE_REG_BITFLIP_WINDOW,
 } FaultMode;
@@ -70,8 +68,6 @@ typedef struct {
     uint32_t bit;
     uint32_t before;
     uint32_t after;
-    uint32_t fault_target;
-    uint32_t fault_value;
 } FaultRecord;
 
 typedef struct {
@@ -210,15 +206,6 @@ static bool read_symbol_u32(const char *name, uint32_t *out)
     return read_u32_addr(symbol->addr, out);
 }
 
-static bool write_symbol_u32(const char *name, uint32_t value)
-{
-    NamedAddress *symbol = find_symbol(name);
-    if (symbol == NULL) {
-        return false;
-    }
-    return write_u32_addr(symbol->addr, value);
-}
-
 static uint32_t read_symbol_u32_or_zero(const char *name)
 {
     uint32_t value = 0;
@@ -266,12 +253,6 @@ static FaultMode parse_mode(const char *campaign)
     if (strcmp(campaign, "none") == 0) {
         return MODE_NONE;
     }
-    if (strcmp(campaign, "abi-none") == 0) {
-        return MODE_ABI_NONE;
-    }
-    if (strcmp(campaign, "abi-mixed") == 0) {
-        return MODE_ABI_MIXED;
-    }
     if (strcmp(campaign, "ram-symbol-bitflip") == 0) {
         return MODE_RAM_SYMBOL_BITFLIP;
     }
@@ -286,10 +267,6 @@ static const char *mode_name(FaultMode mode)
     switch (mode) {
     case MODE_NONE:
         return "none";
-    case MODE_ABI_NONE:
-        return "abi";
-    case MODE_ABI_MIXED:
-        return "abi";
     case MODE_RAM_SYMBOL_BITFLIP:
         return "ram-symbol-bitflip";
     case MODE_REG_BITFLIP_WINDOW:
@@ -303,127 +280,6 @@ static void reset_fault_record(void)
     memset(&g.fault, 0, sizeof(g.fault));
     copy_str(g.fault.fault_mode, sizeof(g.fault.fault_mode), mode_name(g.mode));
     copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "none");
-}
-
-static void choose_abi_fault(uint32_t iteration, uint32_t expected,
-                             uint32_t *target, uint32_t *value)
-{
-    *target = 0;
-    *value = 0;
-
-    if (g.mode == MODE_ABI_NONE) {
-        return;
-    }
-
-    switch (g.technique) {
-    case TECH_TMR:
-        switch ((iteration - 1) % 3) {
-        case 1:
-            *target = 1;
-            *value = expected ^ UINT32_C(0xffffffff);
-            break;
-        case 2:
-            *target = 2;
-            *value = expected ^ UINT32_C(0x13579bdf);
-            break;
-        default:
-            break;
-        }
-        break;
-    case TECH_CHECKPOINT:
-        switch ((iteration - 1) % 6) {
-        case 1:
-            *target = 10;
-            *value = UINT32_C(0xffffffff);
-            break;
-        case 2:
-            *target = 11;
-            *value = UINT32_C(0xffffffff);
-            break;
-        case 3:
-            *target = 12;
-            *value = UINT32_C(0x10);
-            break;
-        case 4:
-            *target = 14;
-            *value = UINT32_C(0x10);
-            break;
-        case 5:
-            *target = 15;
-            *value = UINT32_C(0xffffffff);
-            break;
-        default:
-            break;
-        }
-        break;
-    case TECH_RECOVERY_BLOCK:
-        switch ((iteration - 1) % 5) {
-        case 1:
-            *target = 20;
-            *value = UINT32_C(0xffffffff);
-            break;
-        case 2:
-            *target = 21;
-            *value = UINT32_C(0x10);
-            break;
-        case 3:
-            *target = 22;
-            *value = UINT32_C(0xffffffff);
-            break;
-        case 4:
-            *target = 23;
-            *value = UINT32_C(0xffffffff);
-            break;
-        default:
-            break;
-        }
-        break;
-    case TECH_CONTROL_FLOW:
-        switch ((iteration - 1) % 6) {
-        case 1:
-            *target = 30;
-            *value = 4;
-            break;
-        case 2:
-            *target = 31;
-            *value = UINT32_C(0x10);
-            break;
-        case 3:
-            *target = 32;
-            break;
-        case 4:
-            *target = 33;
-            break;
-        case 5:
-            *target = 34;
-            break;
-        default:
-            break;
-        }
-        break;
-    case TECH_UNKNOWN:
-        break;
-    }
-}
-
-static void inject_abi_fault(uint32_t iteration)
-{
-    uint32_t expected = read_symbol_u32_or_zero("harness_last_expected");
-    uint32_t target = 0;
-    uint32_t value = 0;
-    choose_abi_fault(iteration, expected, &target, &value);
-
-    g.fault.injected = true;
-    g.fault.inject_pc = g.config.start_pc;
-    g.fault.fault_target = target;
-    g.fault.fault_value = value;
-    g.fault.before = 0;
-    g.fault.after = value;
-    copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "harness-abi");
-    copy_str(g.fault.target_name, sizeof(g.fault.target_name), "harness_fault_target");
-
-    (void)write_symbol_u32("harness_fault_value", value);
-    (void)write_symbol_u32("harness_fault_target", target);
 }
 
 static void inject_ram_symbol_fault(void)
@@ -594,6 +450,7 @@ static void write_csv_row(void)
     uint32_t iteration = read_symbol_u32_or_zero("harness_iteration");
     uint32_t stage = read_symbol_u32_or_zero("harness_stage");
     uint32_t fault_target = read_symbol_u32_or_zero("harness_last_fault_target");
+    uint32_t fault_value = read_symbol_u32_or_zero("harness_fault_value");
     uint32_t initial_value = read_symbol_u32_or_zero("harness_last_initial_value");
     uint32_t expected = read_symbol_u32_or_zero("harness_last_expected");
     uint32_t status = read_symbol_u32_or_zero("harness_last_status");
@@ -615,10 +472,6 @@ static void write_csv_row(void)
     uint32_t passes = read_symbol_u32_or_zero("harness_passes");
     uint32_t failures = read_symbol_u32_or_zero("harness_failures");
 
-    if (g.fault.fault_target != 0 || g.fault.fault_value != 0) {
-        fault_target = g.fault.fault_target;
-    }
-
     fprintf(g.csv,
             "%s,%s,%s,%" PRIu32 ",%" PRIu32 ","
             "%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ","
@@ -634,7 +487,7 @@ static void write_csv_row(void)
             iteration,
             stage,
             fault_target,
-            g.fault.fault_value,
+            fault_value,
             initial_value,
             expected,
             status,
@@ -680,14 +533,9 @@ static void on_start_hook(unsigned int vcpu_index, void *userdata)
 
     reset_fault_record();
     g.active_window = true;
-    uint32_t iteration = read_symbol_u32_or_zero("harness_iteration");
 
     switch (g.mode) {
     case MODE_NONE:
-        break;
-    case MODE_ABI_NONE:
-    case MODE_ABI_MIXED:
-        inject_abi_fault(iteration);
         break;
     case MODE_RAM_SYMBOL_BITFLIP:
         inject_ram_symbol_fault();

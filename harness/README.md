@@ -125,13 +125,13 @@ The helper takes:
 
 ```sh
 harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> \
-  [none|abi-none|abi-mixed|ram-symbol-bitflip|reg-bitflip-window] [seed]
+  [none|ram-symbol-bitflip|reg-bitflip-window] [seed]
 ```
 
 It builds the harness firmware, uses the Nix-built `qemu-ft-fuzz.so` plugin,
-and writes CSV output under `results/qemu-ft-fuzz/`. `abi-mixed` is the default
-campaign and mirrors the deterministic firmware ABI faults used by
-`harness-campaign`. `ram-symbol-bitflip` currently has allowlisted RAM state
+and writes CSV output under `results/qemu-ft-fuzz/`. `reg-bitflip-window` is the
+default campaign and flips a random bit in a general-purpose register inside the
+injection window. `ram-symbol-bitflip` currently has allowlisted RAM state
 symbols for the C TMR, checkpoint, and recovery-block harnesses.
 
 Both the GDB/RSP and QEMU plugin runners write interpreted CSVs. Each row has a
@@ -148,7 +148,7 @@ QEMU_FT_FUZZ_PLUGIN=/path/to/qemu-ft-fuzz.so \
   uv run --directory harness/qemu_fuzz python main.py \
     --technique tmr \
     --language c \
-    --campaign abi-mixed \
+    --campaign reg-bitflip-window \
     --iterations 20
 ```
 

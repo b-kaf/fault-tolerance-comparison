@@ -5,8 +5,6 @@ from dataclasses import dataclass
 
 CAMPAIGN_CHOICES: tuple[str, ...] = (
     "none",
-    "abi-none",
-    "abi-mixed",
     "ram-symbol-bitflip",
     "reg-bitflip-window",
 )
@@ -20,8 +18,6 @@ class Campaign:
 
 CAMPAIGNS: dict[str, Campaign] = {
     "none": Campaign("none"),
-    "abi-none": Campaign("abi-none"),
-    "abi-mixed": Campaign("abi-mixed"),
     "ram-symbol-bitflip": Campaign(
         "ram-symbol-bitflip",
         requires_fuzz_symbols=True,

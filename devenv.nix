@@ -62,11 +62,11 @@ in
 
     language="''${1:-}"
     technique="''${2:-}"
-    campaign="''${3:-abi-mixed}"
+    campaign="''${3:-reg-bitflip-window}"
     seed="''${4:-0xC0DEC0DE}"
 
     if [ -z "$language" ] || [ -z "$technique" ]; then
-      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|abi-none|abi-mixed|ram-symbol-bitflip|reg-bitflip-window] [seed]" >&2
+      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|ram-symbol-bitflip|reg-bitflip-window] [seed]" >&2
       exit 2
     fi
 
