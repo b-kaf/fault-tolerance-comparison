@@ -131,8 +131,8 @@ harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> \
 It builds the harness firmware, uses the Nix-built `qemu-ft-fuzz.so` plugin,
 and writes CSV output under `results/qemu-ft-fuzz/`. `reg-bitflip-window` is the
 default campaign and flips a random bit in a general-purpose register inside the
-injection window. `ram-symbol-bitflip` currently has allowlisted RAM state
-symbols for the C TMR, checkpoint, and recovery-block harnesses.
+injection window. `ram-symbol-bitflip` has allowlisted RAM state symbols for the
+C TMR, checkpoint, and recovery-block harnesses, and for all Zig harnesses.
 
 Both the GDB/RSP and QEMU plugin runners write interpreted CSVs. Each row has a
 per-iteration `result`, `pass_delta`, and `failure_delta`, plus human-readable

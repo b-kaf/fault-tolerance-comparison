@@ -24,6 +24,9 @@ export var harness_last_transitions: u32 = 0;
 export var harness_passes: u32 = 0;
 export var harness_failures: u32 = 0;
 export var harness_last_fault_target: u32 = 0;
+export var harness_zig_control_flow_phase: u32 = 0;
+export var harness_zig_control_flow_signature: u32 = 0;
+export var harness_zig_control_flow_transitions: u32 = 0;
 
 fn load(ptr: *const volatile u32) u32 {
     return ptr.*;
@@ -49,10 +52,21 @@ export fn harness_injection_point_after_control_flow() callconv(.c) void {
     asm volatile ("nop // injection_point_after_control_flow");
 }
 
+fn loadMonitor() control_flow.Monitor {
+    return .{
+        .phase = load(&harness_zig_control_flow_phase),
+        .signature = load(&harness_zig_control_flow_signature),
+        .transitions = load(&harness_zig_control_flow_transitions),
+    };
+}
+
 fn mirrorMonitor(monitor: *const control_flow.Monitor) void {
     store(&harness_last_phase, monitor.phase);
     store(&harness_last_signature, monitor.signature);
     store(&harness_last_transitions, monitor.transitions);
+    store(&harness_zig_control_flow_phase, monitor.phase);
+    store(&harness_zig_control_flow_signature, monitor.signature);
+    store(&harness_zig_control_flow_transitions, monitor.transitions);
 }
 
 fn applyAfterReadFault(monitor: *control_flow.Monitor) void {
@@ -72,62 +86,61 @@ fn recordStatus(status: control_flow.ControlStatus) control_flow.ControlStatus {
     return status;
 }
 
-fn runControlFlow(input: u32) void {
-    var monitor = control_flow.Monitor.init();
+fn runControlFlow(input: u32, monitor: *control_flow.Monitor) void {
     var computed: u32 = 0;
 
-    mirrorMonitor(&monitor);
+    mirrorMonitor(monitor);
 
     var status = monitor.advance(.start, .read_input);
     if (!recordStatus(status).passed()) {
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
     store(&harness_stage, abi.stage.after_control_read);
-    applyAfterReadFault(&monitor);
+    applyAfterReadFault(monitor);
 
     if (load(&harness_fault_target) == abi.fault.control_repeat_read) {
         status = monitor.advance(.start, .read_input);
         _ = recordStatus(status);
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
     if (load(&harness_fault_target) == abi.fault.control_skip_compute) {
         status = monitor.advance(.compute, .validate);
         _ = recordStatus(status);
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
     status = monitor.advance(.read_input, .compute);
     if (!recordStatus(status).passed()) {
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
     computed = computeValue(input);
     store(&harness_stage, abi.stage.after_control_compute);
-    mirrorMonitor(&monitor);
+    mirrorMonitor(monitor);
 
     if (load(&harness_fault_target) == abi.fault.control_early_terminal) {
         const terminal_status = monitor.finish();
         store(&harness_last_terminal_status, terminal_status.code());
         store(&harness_last_status, terminal_status.code());
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
     status = monitor.advance(.compute, .validate);
     if (!recordStatus(status).passed()) {
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
     status = monitor.advance(.validate, .commit);
     if (!recordStatus(status).passed()) {
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
@@ -135,14 +148,14 @@ fn runControlFlow(input: u32) void {
 
     status = monitor.advance(.commit, .done);
     if (!recordStatus(status).passed()) {
-        mirrorMonitor(&monitor);
+        mirrorMonitor(monitor);
         return;
     }
 
     const terminal_status = monitor.finish();
     store(&harness_last_terminal_status, terminal_status.code());
     store(&harness_last_status, terminal_status.code());
-    mirrorMonitor(&monitor);
+    mirrorMonitor(monitor);
 }
 
 fn incrementPasses() void {
@@ -222,6 +235,7 @@ export fn harness_main() callconv(.c) noreturn {
         const iteration = load(&harness_iteration) +% 1;
         const input = pattern(iteration);
         const expected = computeValue(input);
+        var monitor = control_flow.Monitor.init();
 
         store(&harness_iteration, iteration);
         store(&harness_last_expected, expected);
@@ -229,16 +243,15 @@ export fn harness_main() callconv(.c) noreturn {
         store(&harness_last_status, abi.control.ok);
         store(&harness_last_control_status, abi.control.ok);
         store(&harness_last_terminal_status, abi.control.ok);
-        store(&harness_last_phase, @intFromEnum(control_flow.Phase.start));
-        store(&harness_last_signature, control_flow.phaseSignature(.start));
-        store(&harness_last_transitions, 0);
+        mirrorMonitor(&monitor);
         store(&harness_last_fault_target, abi.fault.none);
 
         store(&harness_stage, abi.stage.before_control_flow);
         @call(.never_inline, harness_injection_point_before_control_flow, .{});
 
+        monitor = loadMonitor();
         store(&harness_last_fault_target, load(&harness_fault_target));
-        runControlFlow(input);
+        runControlFlow(input, &monitor);
         store(&harness_fault_target, abi.fault.none);
 
         store(&harness_stage, abi.stage.after_control_flow);

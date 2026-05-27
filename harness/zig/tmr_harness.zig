@@ -27,6 +27,15 @@ fn store(ptr: *volatile u32, value: u32) void {
     ptr.* = value;
 }
 
+fn loadState() TmrU32 {
+    return .{
+        .a = load(&harness_zig_tmr_a),
+        .b = load(&harness_zig_tmr_b),
+        .c = load(&harness_zig_tmr_c),
+        .fault_count = load(&harness_zig_tmr_fault_count),
+    };
+}
+
 fn pattern(iteration: u32) u32 {
     return 0x5a5a0000 ^ (iteration *% 2654435761);
 }
@@ -104,6 +113,7 @@ export fn harness_main() callconv(.c) noreturn {
         store(&harness_stage, abi.stage.after_init);
         @call(.never_inline, harness_injection_point_after_init, .{});
 
+        state = loadState();
         applyPendingFault(&state);
 
         store(&harness_stage, abi.stage.before_read);

@@ -34,10 +34,18 @@ export var harness_failures: u32 = 0;
 export var harness_last_fault_target: u32 = 0;
 
 export var harness_zig_active_tag: u32 = 0;
+export var harness_zig_active_value: u32 = 0;
+export var harness_zig_active_min: u32 = 0;
+export var harness_zig_active_max: u32 = 0;
 export var harness_zig_active_length: u32 = 0;
+export var harness_zig_active_capacity: u32 = 0;
 export var harness_zig_active_checksum: u32 = 0;
 export var harness_zig_checkpoint_tag: u32 = 0;
+export var harness_zig_checkpoint_value: u32 = 0;
+export var harness_zig_checkpoint_min: u32 = 0;
+export var harness_zig_checkpoint_max: u32 = 0;
 export var harness_zig_checkpoint_length: u32 = 0;
+export var harness_zig_checkpoint_capacity: u32 = 0;
 export var harness_zig_checkpoint_checksum: u32 = 0;
 
 fn load(ptr: *const volatile u32) u32 {
@@ -67,14 +75,53 @@ fn sampleRecord(value: u32) checker.CheckedRecord {
     );
 }
 
+fn loadActiveRecord() checker.CheckedRecord {
+    return .{
+        .tag = load(&harness_zig_active_tag),
+        .value = load(&harness_zig_active_value),
+        .min = load(&harness_zig_active_min),
+        .max = load(&harness_zig_active_max),
+        .length = load(&harness_zig_active_length),
+        .capacity = load(&harness_zig_active_capacity),
+        .checksum = load(&harness_zig_active_checksum),
+    };
+}
+
+fn loadCheckpointRecord() checker.CheckedRecord {
+    return .{
+        .tag = load(&harness_zig_checkpoint_tag),
+        .value = load(&harness_zig_checkpoint_value),
+        .min = load(&harness_zig_checkpoint_min),
+        .max = load(&harness_zig_checkpoint_max),
+        .length = load(&harness_zig_checkpoint_length),
+        .capacity = load(&harness_zig_checkpoint_capacity),
+        .checksum = load(&harness_zig_checkpoint_checksum),
+    };
+}
+
+fn loadState() checkpoint.CheckpointedRecord {
+    return .{
+        .active = loadActiveRecord(),
+        .checkpoint = loadCheckpointRecord(),
+    };
+}
+
 fn mirrorState(state: *const checkpoint.CheckpointedRecord) void {
     store(&harness_last_active_value, state.active.value);
     store(&harness_last_checkpoint_value, state.checkpoint.value);
     store(&harness_zig_active_tag, state.active.tag);
+    store(&harness_zig_active_value, state.active.value);
+    store(&harness_zig_active_min, state.active.min);
+    store(&harness_zig_active_max, state.active.max);
     store(&harness_zig_active_length, state.active.length);
+    store(&harness_zig_active_capacity, state.active.capacity);
     store(&harness_zig_active_checksum, state.active.checksum);
     store(&harness_zig_checkpoint_tag, state.checkpoint.tag);
+    store(&harness_zig_checkpoint_value, state.checkpoint.value);
+    store(&harness_zig_checkpoint_min, state.checkpoint.min);
+    store(&harness_zig_checkpoint_max, state.checkpoint.max);
     store(&harness_zig_checkpoint_length, state.checkpoint.length);
+    store(&harness_zig_checkpoint_capacity, state.checkpoint.capacity);
     store(&harness_zig_checkpoint_checksum, state.checkpoint.checksum);
 }
 
@@ -217,6 +264,7 @@ export fn harness_main() callconv(.c) noreturn {
         store(&harness_stage, abi.stage.after_mutation);
         @call(.never_inline, harness_injection_point_after_mutation, .{});
 
+        state = loadState();
         applyPendingFault(&state);
 
         store(&harness_stage, abi.stage.before_commit);

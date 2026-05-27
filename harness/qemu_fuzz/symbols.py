@@ -60,10 +60,44 @@ TELEMETRY_SYMBOLS: tuple[str, ...] = (
     "harness_failures",
 )
 
+ZIG_TMR_FUZZ_SYMBOLS: tuple[str, ...] = (
+    "harness_zig_tmr_a",
+    "harness_zig_tmr_b",
+    "harness_zig_tmr_c",
+    "harness_zig_tmr_fault_count",
+)
+
+ZIG_CHECKPOINT_FUZZ_SYMBOLS: tuple[str, ...] = (
+    "harness_zig_active_tag",
+    "harness_zig_active_value",
+    "harness_zig_active_min",
+    "harness_zig_active_max",
+    "harness_zig_active_length",
+    "harness_zig_active_capacity",
+    "harness_zig_active_checksum",
+    "harness_zig_checkpoint_tag",
+    "harness_zig_checkpoint_value",
+    "harness_zig_checkpoint_min",
+    "harness_zig_checkpoint_max",
+    "harness_zig_checkpoint_length",
+    "harness_zig_checkpoint_capacity",
+    "harness_zig_checkpoint_checksum",
+)
+
+ZIG_CONTROL_FLOW_FUZZ_SYMBOLS: tuple[str, ...] = (
+    "harness_zig_control_flow_phase",
+    "harness_zig_control_flow_signature",
+    "harness_zig_control_flow_transitions",
+)
+
 FUZZ_SYMBOLS: dict[tuple[str, str], tuple[str, ...]] = {
     ("tmr", "c"): ("harness_c_tmr_state",),
+    ("tmr", "zig"): ZIG_TMR_FUZZ_SYMBOLS,
     ("checkpoint", "c"): ("harness_c_checkpoint_state",),
+    ("checkpoint", "zig"): ZIG_CHECKPOINT_FUZZ_SYMBOLS,
     ("recovery-block", "c"): ("harness_c_recovery_block_state",),
+    ("recovery-block", "zig"): ZIG_CHECKPOINT_FUZZ_SYMBOLS,
+    ("control-flow", "zig"): ZIG_CONTROL_FLOW_FUZZ_SYMBOLS,
 }
 
 
