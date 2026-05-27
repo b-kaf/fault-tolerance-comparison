@@ -14,7 +14,7 @@ This harness builds bare-metal Cortex-M4 firmware images for QEMU's
 
 Both are cross-compiled by Zig through `build.zig`. Shared startup, linker, and
 ABI definitions live in `harness/common`; implementation-specific loop harnesses
-live in `harness/c` and `harness/zig`.
+and the GDB/RSP injector live in `harness/e2e`.
 
 ## Build
 
@@ -23,6 +23,15 @@ zig build harness
 ```
 
 The ELFs are installed under `zig-out/harness/`.
+
+Single-shot fuzz harnesses are built separately:
+
+```sh
+zig build fuzz-harness
+```
+
+Those ELFs use names such as
+`zig-out/harness/tmr-fuzz-harness-c-m4.elf`.
 
 ## Run A Campaign
 
@@ -42,7 +51,7 @@ harness-campaign zig checkpoint -- /tmp/checkpoint-zig.csv 12411
 ```
 
 ```sh
-cd harness/injector
+cd harness/e2e/injector
 uv run python main.py \
   --launch-qemu \
   --technique tmr \
@@ -112,44 +121,44 @@ fault-control globals, and records the result counters exposed by the firmware.
 
 ## Run A QEMU TCG Plugin Fuzz Campaign
 
-The QEMU TCG plugin runner is separate from the GDB/RSP injector. From the
-devenv shell:
+The fuzz runner uses the single-shot fuzz harnesses and the QEMU TCG plugin. Each trial
+launches one QEMU process, injects at most one fault, records raw facts from the
+firmware, and writes one classified CSV row. From the devenv shell:
 
 ```sh
 harness-fuzz-campaign c tmr
-harness-fuzz-campaign zig tmr reg-bitflip-window 0x1234
-harness-fuzz-campaign c checkpoint ram-symbol-bitflip 0x1234
+harness-fuzz-campaign zig tmr reg-bitflip-window 100 0x1234
+harness-fuzz-campaign c checkpoint ram-symbol-bitflip 100 0x1234
 ```
 
 The helper takes:
 
 ```sh
 harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> \
-  [none|ram-symbol-bitflip|reg-bitflip-window] [seed]
+  [none|ram-symbol-bitflip|reg-bitflip-window] [trials] [seed]
 ```
 
-It builds the harness firmware, uses the Nix-built `qemu-ft-fuzz.so` plugin,
-and writes CSV output under `results/qemu-ft-fuzz/`. `reg-bitflip-window` is the
-default campaign and flips a random bit in a general-purpose register inside the
-injection window. `ram-symbol-bitflip` has allowlisted RAM state symbols for the
-C TMR, checkpoint, and recovery-block harnesses, and for all Zig harnesses.
+It builds the fuzz harness firmware, uses the Nix-built `qemu-ft-fuzz.so`
+plugin, and writes CSV output under `results/qemu-ft-fuzz/`.
+`reg-bitflip-window` is the default campaign and flips a random bit in a
+general-purpose register while `harness_fault_window_open` is set.
+`ram-symbol-bitflip` chooses from exported `harness_fuzz_*` live-state symbols.
 
-Both the GDB/RSP and QEMU plugin runners write interpreted CSVs. Each row has a
-per-iteration `result`, `pass_delta`, and `failure_delta`, plus human-readable
-labels such as `stage_name`, `fault_name`, `recovery_status_name`, and
-`*_check_name` next to the raw ABI values. Plugin fuzz rows add seed and
-injection details such as `fault_mode`, `target_kind`, `target_name`,
-`inject_pc`, `bit`, `before`, and `after`.
+Rows are classified as `masked`, `sdc`, `detected`, `corrected`, `fail_safe`,
+`crash`, `hang`, or `invalid_trial`. The firmware exports raw facts such as
+`harness_output`, `harness_expected`, `harness_detected`,
+`harness_corrected`, and `harness_safe_state`; the Python runner assigns the
+final class.
 
 The runner can also be called directly:
 
 ```sh
 QEMU_FT_FUZZ_PLUGIN=/path/to/qemu-ft-fuzz.so \
-  uv run --directory harness/qemu_fuzz python main.py \
+  uv run --directory harness/fuzz/runner python main.py \
     --technique tmr \
     --language c \
     --campaign reg-bitflip-window \
-    --iterations 20
+    --trials 20
 ```
 
 ## Firmware ABI

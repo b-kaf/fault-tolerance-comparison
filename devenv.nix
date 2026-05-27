@@ -50,7 +50,7 @@ in
 
     zig build harness
 
-    uv run --directory harness/injector python main.py \
+    uv run --directory harness/e2e/injector python main.py \
       --launch-qemu \
       --language "$language" \
       --technique "$technique" \
@@ -63,22 +63,23 @@ in
     language="''${1:-}"
     technique="''${2:-}"
     campaign="''${3:-reg-bitflip-window}"
-    seed="''${4:-0xC0DEC0DE}"
+    trials="''${4:-20}"
+    seed="''${5:-0xC0DEC0DE}"
 
     if [ -z "$language" ] || [ -z "$technique" ]; then
-      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|ram-symbol-bitflip|reg-bitflip-window] [seed]" >&2
+      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|ram-symbol-bitflip|reg-bitflip-window] [trials] [seed]" >&2
       exit 2
     fi
 
-    zig build harness
+    zig build fuzz-harness
 
     QEMU_FT_FUZZ_PLUGIN="${qemuFtFuzzPlugin}/lib/qemu-ft-fuzz.so" \
-      uv run --directory harness/qemu_fuzz python main.py \
+      uv run --directory harness/fuzz/runner python main.py \
         --language "$language" \
         --technique "$technique" \
         --campaign "$campaign" \
         --seed "$seed" \
-        --iterations "''${ITERATIONS:-20}"
+        --trials "''${ITERATIONS:-$trials}"
   '';
   scripts.harness-asm.exec = ''
     set -eu

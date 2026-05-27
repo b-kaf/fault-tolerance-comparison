@@ -11,16 +11,8 @@
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
 #define MAX_SYMBOLS 128
-#define MAX_FUZZ_SYMBOLS 32
+#define MAX_FUZZ_SYMBOLS 64
 #define MAX_REGS 16
-
-typedef enum {
-    TECH_TMR,
-    TECH_CHECKPOINT,
-    TECH_RECOVERY_BLOCK,
-    TECH_CONTROL_FLOW,
-    TECH_UNKNOWN,
-} Technique;
 
 typedef enum {
     MODE_NONE,
@@ -43,12 +35,15 @@ typedef struct {
     char technique[32];
     char language[16];
     char campaign[64];
-    char csv_path[512];
+    char fault_mode[64];
+    char fault_domain[32];
+    char raw_result_path[512];
     char done_path[512];
-    uint64_t seed;
-    uint32_t iterations;
-    uint64_t start_pc;
-    uint64_t end_pc;
+    uint64_t campaign_seed;
+    uint64_t trial_seed;
+    uint32_t trial_id;
+    uint64_t max_instructions;
+    uint64_t entry_pc;
     uint64_t text_start;
     uint64_t text_end;
     NamedAddress symbols[MAX_SYMBOLS];
@@ -73,13 +68,14 @@ typedef struct {
 typedef struct {
     qemu_plugin_id_t id;
     Config config;
-    Technique technique;
     FaultMode mode;
-    FILE *csv;
     bool done;
+    bool seed_written;
+    bool raw_result_written;
+    bool instruction_budget_exhausted;
     bool active_window;
-    uint32_t rows_written;
     uint64_t rng_state;
+    uint64_t instructions_executed;
     uint64_t window_insns_seen;
     uint64_t reg_inject_after;
     size_t selected_reg;
@@ -132,10 +128,9 @@ static bool parse_u64(const char *value, uint64_t *out)
 
 static void copy_str(char *dest, size_t dest_size, const char *src)
 {
-    if (dest_size == 0) {
-        return;
+    if (dest_size != 0) {
+        snprintf(dest, dest_size, "%s", src);
     }
-    snprintf(dest, dest_size, "%s", src);
 }
 
 static NamedAddress *append_named_address(NamedAddress *items, size_t *count,
@@ -196,21 +191,40 @@ static bool write_u32_addr(uint64_t addr, uint32_t value)
     return result == QEMU_PLUGIN_HWADDR_OPERATION_OK;
 }
 
-static bool read_symbol_u32(const char *name, uint32_t *out)
+static bool write_u64_addr(uint64_t addr, uint64_t value)
 {
-    NamedAddress *symbol = find_symbol(name);
-    if (symbol == NULL) {
-        *out = 0;
-        return false;
-    }
-    return read_u32_addr(symbol->addr, out);
+    uint8_t raw[sizeof(uint64_t)] = {
+        (uint8_t)(value & 0xffu),
+        (uint8_t)((value >> 8) & 0xffu),
+        (uint8_t)((value >> 16) & 0xffu),
+        (uint8_t)((value >> 24) & 0xffu),
+        (uint8_t)((value >> 32) & 0xffu),
+        (uint8_t)((value >> 40) & 0xffu),
+        (uint8_t)((value >> 48) & 0xffu),
+        (uint8_t)((value >> 56) & 0xffu),
+    };
+    GByteArray *bytes = g_byte_array_sized_new(sizeof(raw));
+    g_byte_array_append(bytes, raw, sizeof(raw));
+    enum qemu_plugin_hwaddr_operation_result result =
+        qemu_plugin_write_memory_hwaddr(addr, bytes);
+    g_byte_array_unref(bytes);
+    return result == QEMU_PLUGIN_HWADDR_OPERATION_OK;
 }
 
 static uint32_t read_symbol_u32_or_zero(const char *name)
 {
     uint32_t value = 0;
-    (void)read_symbol_u32(name, &value);
+    NamedAddress *symbol = find_symbol(name);
+    if (symbol != NULL) {
+        (void)read_u32_addr(symbol->addr, &value);
+    }
     return value;
+}
+
+static bool write_symbol_u64(const char *name, uint64_t value)
+{
+    NamedAddress *symbol = find_symbol(name);
+    return symbol != NULL && write_u64_addr(symbol->addr, value);
 }
 
 static uint64_t rng_next(void)
@@ -225,38 +239,18 @@ static uint64_t rng_next(void)
 
 static uint32_t rng_bounded(uint32_t bound)
 {
-    if (bound == 0) {
-        return 0;
-    }
-    return (uint32_t)(rng_next() % bound);
+    return bound == 0 ? 0 : (uint32_t)(rng_next() % bound);
 }
 
-static Technique parse_technique(const char *value)
+static FaultMode parse_mode(const char *value)
 {
-    if (strcmp(value, "tmr") == 0) {
-        return TECH_TMR;
-    }
-    if (strcmp(value, "checkpoint") == 0) {
-        return TECH_CHECKPOINT;
-    }
-    if (strcmp(value, "recovery-block") == 0) {
-        return TECH_RECOVERY_BLOCK;
-    }
-    if (strcmp(value, "control-flow") == 0) {
-        return TECH_CONTROL_FLOW;
-    }
-    return TECH_UNKNOWN;
-}
-
-static FaultMode parse_mode(const char *campaign)
-{
-    if (strcmp(campaign, "none") == 0) {
+    if (strcmp(value, "none") == 0) {
         return MODE_NONE;
     }
-    if (strcmp(campaign, "ram-symbol-bitflip") == 0) {
+    if (strcmp(value, "ram-symbol-bitflip") == 0) {
         return MODE_RAM_SYMBOL_BITFLIP;
     }
-    if (strcmp(campaign, "reg-bitflip-window") == 0) {
+    if (strcmp(value, "reg-bitflip-window") == 0) {
         return MODE_REG_BITFLIP_WINDOW;
     }
     return MODE_NONE;
@@ -282,7 +276,7 @@ static void reset_fault_record(void)
     copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "none");
 }
 
-static void inject_ram_symbol_fault(void)
+static void inject_ram_symbol_fault(uint64_t pc)
 {
     if (g.config.fuzz_symbol_count == 0) {
         copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "no-fuzz-symbol");
@@ -300,34 +294,28 @@ static void inject_ram_symbol_fault(void)
     uint32_t bit = rng_bounded(32);
     uint32_t before = 0;
 
+    g.fault.inject_pc = pc;
+    g.fault.inject_offset = word_index * sizeof(uint32_t);
+    g.fault.target_addr = addr;
+    g.fault.bit = bit;
+    copy_str(g.fault.target_name, sizeof(g.fault.target_name), symbol->name);
+
     if (!read_u32_addr(addr, &before)) {
         copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "ram-read-failed");
-        copy_str(g.fault.target_name, sizeof(g.fault.target_name), symbol->name);
-        g.fault.target_addr = addr;
-        g.fault.bit = bit;
         return;
     }
 
     uint32_t after = before ^ (UINT32_C(1) << bit);
+    g.fault.before = before;
+    g.fault.after = after;
+
     if (!write_u32_addr(addr, after)) {
         copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "ram-write-failed");
-        copy_str(g.fault.target_name, sizeof(g.fault.target_name), symbol->name);
-        g.fault.target_addr = addr;
-        g.fault.bit = bit;
-        g.fault.before = before;
-        g.fault.after = after;
         return;
     }
 
     g.fault.injected = true;
-    g.fault.inject_pc = g.config.start_pc;
-    g.fault.inject_offset = word_index * sizeof(uint32_t);
-    g.fault.target_addr = addr;
-    g.fault.bit = bit;
-    g.fault.before = before;
-    g.fault.after = after;
     copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "ram-symbol");
-    copy_str(g.fault.target_name, sizeof(g.fault.target_name), symbol->name);
 }
 
 static bool read_register_u32(size_t index, uint32_t *out, GByteArray **out_bytes)
@@ -357,12 +345,24 @@ static bool write_register_u32(size_t index, GByteArray *bytes, uint32_t value)
     return qemu_plugin_write_register(g.regs[index].handle, bytes) > 0;
 }
 
-static void maybe_inject_register_fault(uint64_t pc)
+static void prepare_register_fault(void)
 {
-    if (g.done || !g.active_window || g.mode != MODE_REG_BITFLIP_WINDOW) {
+    if (g.reg_count == 0) {
+        copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "no-register");
         return;
     }
-    if (g.fault.injected || g.reg_count == 0) {
+    g.window_insns_seen = 0;
+    g.reg_inject_after = 1 + rng_bounded(8);
+    g.selected_reg = rng_bounded((uint32_t)g.reg_count);
+    g.fault.bit = rng_bounded(32);
+    copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg-pending");
+    copy_str(g.fault.target_name, sizeof(g.fault.target_name), g.regs[g.selected_reg].name);
+}
+
+static void maybe_inject_register_fault(uint64_t pc)
+{
+    if (!g.active_window || g.mode != MODE_REG_BITFLIP_WINDOW
+        || g.fault.injected || g.reg_count == 0) {
         return;
     }
 
@@ -375,12 +375,10 @@ static void maybe_inject_register_fault(uint64_t pc)
     GByteArray *bytes = NULL;
     if (!read_register_u32(g.selected_reg, &before, &bytes)) {
         copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg-read-failed");
-        copy_str(g.fault.target_name, sizeof(g.fault.target_name), g.regs[g.selected_reg].name);
         return;
     }
 
-    uint32_t bit = g.fault.bit;
-    uint32_t after = before ^ (UINT32_C(1) << bit);
+    uint32_t after = before ^ (UINT32_C(1) << g.fault.bit);
     bool ok = write_register_u32(g.selected_reg, bytes, after);
     g_byte_array_unref(bytes);
 
@@ -399,18 +397,51 @@ static void maybe_inject_register_fault(uint64_t pc)
     copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg");
 }
 
-static void prepare_register_fault(void)
+static void write_raw_result(const char *plugin_status)
 {
-    if (g.reg_count == 0) {
-        copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "no-register");
+    if (g.raw_result_written || g.config.raw_result_path[0] == '\0') {
         return;
     }
-    g.window_insns_seen = 0;
-    g.reg_inject_after = 1 + rng_bounded(64);
-    g.selected_reg = rng_bounded((uint32_t)g.reg_count);
-    g.fault.bit = rng_bounded(32);
-    copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg-pending");
-    copy_str(g.fault.target_name, sizeof(g.fault.target_name), g.regs[g.selected_reg].name);
+
+    FILE *file = fopen(g.config.raw_result_path, "w");
+    if (file == NULL) {
+        plugin_log2("qemu-ft-fuzz: could not open raw result: ", g.config.raw_result_path);
+        return;
+    }
+
+    fprintf(file, "technique=%s\n", g.config.technique);
+    fprintf(file, "implementation=%s\n", g.config.language);
+    fprintf(file, "campaign=%s\n", g.config.campaign);
+    fprintf(file, "campaign_seed=0x%" PRIx64 "\n", g.config.campaign_seed);
+    fprintf(file, "trial_id=%" PRIu32 "\n", g.config.trial_id);
+    fprintf(file, "trial_seed=0x%" PRIx64 "\n", g.config.trial_seed);
+    fprintf(file, "harness_done=%" PRIu32 "\n", read_symbol_u32_or_zero("harness_done"));
+    fprintf(file, "harness_detected=%" PRIu32 "\n", read_symbol_u32_or_zero("harness_detected"));
+    fprintf(file, "harness_corrected=%" PRIu32 "\n", read_symbol_u32_or_zero("harness_corrected"));
+    fprintf(file, "harness_safe_state=%" PRIu32 "\n", read_symbol_u32_or_zero("harness_safe_state"));
+    fprintf(file, "harness_output=%" PRIu32 "\n", read_symbol_u32_or_zero("harness_output"));
+    fprintf(file, "harness_expected=%" PRIu32 "\n", read_symbol_u32_or_zero("harness_expected"));
+    fprintf(file, "harness_error_code=%" PRIu32 "\n", read_symbol_u32_or_zero("harness_error_code"));
+    fprintf(file, "harness_fault_window_open=%" PRIu32 "\n",
+            read_symbol_u32_or_zero("harness_fault_window_open"));
+    fprintf(file, "injected=%u\n", g.fault.injected ? 1u : 0u);
+    fprintf(file, "fault_mode=%s\n", g.fault.fault_mode);
+    fprintf(file, "fault_domain=%s\n", g.config.fault_domain);
+    fprintf(file, "target_kind=%s\n", g.fault.target_kind);
+    fprintf(file, "target_name=%s\n", g.fault.target_name);
+    fprintf(file, "target_addr=0x%" PRIx64 "\n", g.fault.target_addr);
+    fprintf(file, "inject_pc=0x%" PRIx64 "\n", g.fault.inject_pc);
+    fprintf(file, "inject_offset=%" PRIu64 "\n", g.fault.inject_offset);
+    fprintf(file, "bit=%" PRIu32 "\n", g.fault.bit);
+    fprintf(file, "before=%" PRIu32 "\n", g.fault.before);
+    fprintf(file, "after=%" PRIu32 "\n", g.fault.after);
+    fprintf(file, "instructions_executed=%" PRIu64 "\n", g.instructions_executed);
+    fprintf(file, "instruction_budget_exhausted=%u\n",
+            g.instruction_budget_exhausted ? 1u : 0u);
+    fprintf(file, "qemu_plugin_api=%d\n", QEMU_PLUGIN_VERSION);
+    fprintf(file, "plugin_status=%s\n", plugin_status);
+    fclose(file);
+    g.raw_result_written = true;
 }
 
 static void mark_done(void)
@@ -419,149 +450,49 @@ static void mark_done(void)
         return;
     }
     g.done = true;
-    if (g.csv != NULL) {
-        fflush(g.csv);
-    }
     if (g.config.done_path[0] != '\0') {
         FILE *done = fopen(g.config.done_path, "w");
         if (done != NULL) {
-            fprintf(done, "rows=%" PRIu32 "\n", g.rows_written);
+            fprintf(done, "done=1\n");
             fclose(done);
         }
     }
 }
 
-static void write_csv_header(void)
+static void ensure_seed_written(uint64_t pc)
 {
-    fprintf(g.csv,
-            "technique,implementation,campaign,iteration,stage,"
-            "fault_target,fault_value,initial_value,expected,status,"
-            "restart_status,recovery_status,control_status,terminal_status,"
-            "active_check,checkpoint_check,primary_check,restore_check,"
-            "alternate_check,phase,signature,transitions,value,active_value,"
-            "checkpoint_value,passes,failures,seed,fault_mode,inject_pc,"
-            "inject_offset,target_kind,target_name,target_addr,bit,before,"
-            "after,qemu_plugin_api\n");
-    fflush(g.csv);
-}
-
-static void write_csv_row(void)
-{
-    uint32_t iteration = read_symbol_u32_or_zero("harness_iteration");
-    uint32_t stage = read_symbol_u32_or_zero("harness_stage");
-    uint32_t fault_target = read_symbol_u32_or_zero("harness_last_fault_target");
-    uint32_t fault_value = read_symbol_u32_or_zero("harness_fault_value");
-    uint32_t initial_value = read_symbol_u32_or_zero("harness_last_initial_value");
-    uint32_t expected = read_symbol_u32_or_zero("harness_last_expected");
-    uint32_t status = read_symbol_u32_or_zero("harness_last_status");
-    uint32_t restart_status = read_symbol_u32_or_zero("harness_last_restart_status");
-    uint32_t recovery_status = read_symbol_u32_or_zero("harness_last_recovery_status");
-    uint32_t control_status = read_symbol_u32_or_zero("harness_last_control_status");
-    uint32_t terminal_status = read_symbol_u32_or_zero("harness_last_terminal_status");
-    uint32_t active_check = read_symbol_u32_or_zero("harness_last_active_check");
-    uint32_t checkpoint_check = read_symbol_u32_or_zero("harness_last_checkpoint_check");
-    uint32_t primary_check = read_symbol_u32_or_zero("harness_last_primary_check");
-    uint32_t restore_check = read_symbol_u32_or_zero("harness_last_restore_check");
-    uint32_t alternate_check = read_symbol_u32_or_zero("harness_last_alternate_check");
-    uint32_t phase = read_symbol_u32_or_zero("harness_last_phase");
-    uint32_t signature = read_symbol_u32_or_zero("harness_last_signature");
-    uint32_t transitions = read_symbol_u32_or_zero("harness_last_transitions");
-    uint32_t value = read_symbol_u32_or_zero("harness_last_value");
-    uint32_t active_value = read_symbol_u32_or_zero("harness_last_active_value");
-    uint32_t checkpoint_value = read_symbol_u32_or_zero("harness_last_checkpoint_value");
-    uint32_t passes = read_symbol_u32_or_zero("harness_passes");
-    uint32_t failures = read_symbol_u32_or_zero("harness_failures");
-
-    fprintf(g.csv,
-            "%s,%s,%s,%" PRIu32 ",%" PRIu32 ","
-            "%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ","
-            "%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ","
-            "%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ","
-            "%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ","
-            "%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu64 ",%s,0x%" PRIx64 ","
-            "%" PRIu64 ",%s,%s,0x%" PRIx64 ",%" PRIu32 ",%" PRIu32 ","
-            "%" PRIu32 ",%d\n",
-            g.config.technique,
-            g.config.language,
-            g.config.campaign,
-            iteration,
-            stage,
-            fault_target,
-            fault_value,
-            initial_value,
-            expected,
-            status,
-            restart_status,
-            recovery_status,
-            control_status,
-            terminal_status,
-            active_check,
-            checkpoint_check,
-            primary_check,
-            restore_check,
-            alternate_check,
-            phase,
-            signature,
-            transitions,
-            value,
-            active_value,
-            checkpoint_value,
-            passes,
-            failures,
-            g.config.seed,
-            g.fault.fault_mode,
-            g.fault.inject_pc,
-            g.fault.inject_offset,
-            g.fault.target_kind,
-            g.fault.target_name,
-            g.fault.target_addr,
-            g.fault.bit,
-            g.fault.before,
-            g.fault.after,
-            QEMU_PLUGIN_VERSION);
-    fflush(g.csv);
-}
-
-static void on_start_hook(unsigned int vcpu_index, void *userdata)
-{
-    (void)vcpu_index;
-    (void)userdata;
-
-    if (g.done) {
+    if (g.seed_written || pc != g.config.entry_pc) {
         return;
     }
-
-    reset_fault_record();
-    g.active_window = true;
-
-    switch (g.mode) {
-    case MODE_NONE:
-        break;
-    case MODE_RAM_SYMBOL_BITFLIP:
-        inject_ram_symbol_fault();
-        break;
-    case MODE_REG_BITFLIP_WINDOW:
-        prepare_register_fault();
-        break;
+    if (!write_symbol_u64("harness_trial_seed", g.config.trial_seed)) {
+        plugin_log("qemu-ft-fuzz: failed to write harness_trial_seed\n");
     }
+    g.seed_written = true;
 }
 
-static void on_end_hook(unsigned int vcpu_index, void *userdata)
+static void handle_fault_window(uint64_t pc)
 {
-    (void)vcpu_index;
-    (void)userdata;
+    uint32_t open = read_symbol_u32_or_zero("harness_fault_window_open");
 
-    if (g.done) {
-        return;
+    if (open != 0u && !g.active_window) {
+        g.active_window = true;
+        reset_fault_record();
+        switch (g.mode) {
+        case MODE_NONE:
+            break;
+        case MODE_RAM_SYMBOL_BITFLIP:
+            inject_ram_symbol_fault(pc);
+            break;
+        case MODE_REG_BITFLIP_WINDOW:
+            prepare_register_fault();
+            break;
+        }
     }
 
-    g.active_window = false;
-    if (g.csv != NULL) {
-        write_csv_row();
-    }
-    g.rows_written += 1;
-    if (g.rows_written >= g.config.iterations) {
-        mark_done();
+    if (open != 0u) {
+        maybe_inject_register_fault(pc);
+    } else {
+        g.active_window = false;
     }
 }
 
@@ -569,7 +500,28 @@ static void on_instruction(unsigned int vcpu_index, void *userdata)
 {
     (void)vcpu_index;
     uint64_t pc = (uint64_t)(uintptr_t)userdata;
-    maybe_inject_register_fault(pc);
+
+    if (g.done) {
+        return;
+    }
+
+    g.instructions_executed += 1;
+    ensure_seed_written(pc);
+
+    if (g.config.max_instructions != 0
+        && g.instructions_executed > g.config.max_instructions) {
+        g.instruction_budget_exhausted = true;
+        write_raw_result("instruction_budget_exhausted");
+        mark_done();
+        return;
+    }
+
+    handle_fault_window(pc);
+
+    if (read_symbol_u32_or_zero("harness_done") != 0u) {
+        write_raw_result("completed");
+        mark_done();
+    }
 }
 
 static void on_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
@@ -579,27 +531,14 @@ static void on_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
     for (size_t i = 0; i < insn_count; i++) {
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
         uint64_t pc = qemu_plugin_insn_vaddr(insn);
-
-        if (pc == g.config.start_pc) {
-            qemu_plugin_register_vcpu_insn_exec_cb(
-                insn, on_start_hook, QEMU_PLUGIN_CB_NO_REGS, NULL);
+        if (pc < g.config.text_start || pc >= g.config.text_end) {
+            continue;
         }
-        if (pc == g.config.end_pc) {
-            qemu_plugin_register_vcpu_insn_exec_cb(
-                insn, on_end_hook, QEMU_PLUGIN_CB_NO_REGS, NULL);
-        }
-
-        if (g.mode == MODE_REG_BITFLIP_WINDOW
-            && pc >= g.config.text_start
-            && pc < g.config.text_end
-            && pc != g.config.start_pc
-            && pc != g.config.end_pc) {
-            qemu_plugin_register_vcpu_insn_exec_cb(
-                insn,
-                on_instruction,
-                QEMU_PLUGIN_CB_RW_REGS,
-                (void *)(uintptr_t)pc);
-        }
+        qemu_plugin_register_vcpu_insn_exec_cb(
+            insn,
+            on_instruction,
+            g.mode == MODE_REG_BITFLIP_WINDOW ? QEMU_PLUGIN_CB_RW_REGS : QEMU_PLUGIN_CB_NO_REGS,
+            (void *)(uintptr_t)pc);
     }
 }
 
@@ -644,17 +583,6 @@ static void on_vcpu_init(qemu_plugin_id_t id, unsigned int vcpu_index)
     g_array_free(registers, TRUE);
 }
 
-static void on_atexit(qemu_plugin_id_t id, void *userdata)
-{
-    (void)id;
-    (void)userdata;
-    if (g.csv != NULL) {
-        fflush(g.csv);
-        fclose(g.csv);
-        g.csv = NULL;
-    }
-}
-
 static bool parse_named_addr_value(const char *value, uint64_t *addr, uint64_t *size)
 {
     char local[128];
@@ -688,7 +616,7 @@ static bool parse_manifest_line(char *line, Config *config)
         copy_str(config->technique, sizeof(config->technique), value);
         return true;
     }
-    if (strcmp(key, "language") == 0) {
+    if (strcmp(key, "language") == 0 || strcmp(key, "implementation") == 0) {
         copy_str(config->language, sizeof(config->language), value);
         return true;
     }
@@ -696,30 +624,41 @@ static bool parse_manifest_line(char *line, Config *config)
         copy_str(config->campaign, sizeof(config->campaign), value);
         return true;
     }
-    if (strcmp(key, "csv") == 0) {
-        copy_str(config->csv_path, sizeof(config->csv_path), value);
+    if (strcmp(key, "fault_mode") == 0) {
+        copy_str(config->fault_mode, sizeof(config->fault_mode), value);
+        return true;
+    }
+    if (strcmp(key, "fault_domain") == 0) {
+        copy_str(config->fault_domain, sizeof(config->fault_domain), value);
+        return true;
+    }
+    if (strcmp(key, "raw_result") == 0) {
+        copy_str(config->raw_result_path, sizeof(config->raw_result_path), value);
         return true;
     }
     if (strcmp(key, "done") == 0) {
         copy_str(config->done_path, sizeof(config->done_path), value);
         return true;
     }
-    if (strcmp(key, "seed") == 0) {
-        return parse_u64(value, &config->seed);
+    if (strcmp(key, "campaign_seed") == 0) {
+        return parse_u64(value, &config->campaign_seed);
     }
-    if (strcmp(key, "iterations") == 0) {
-        uint64_t iterations = 0;
-        if (!parse_u64(value, &iterations)) {
+    if (strcmp(key, "trial_seed") == 0 || strcmp(key, "seed") == 0) {
+        return parse_u64(value, &config->trial_seed);
+    }
+    if (strcmp(key, "trial_id") == 0) {
+        uint64_t trial_id = 0;
+        if (!parse_u64(value, &trial_id)) {
             return false;
         }
-        config->iterations = (uint32_t)iterations;
+        config->trial_id = (uint32_t)trial_id;
         return true;
     }
-    if (strcmp(key, "start_pc") == 0) {
-        return parse_u64(value, &config->start_pc);
+    if (strcmp(key, "max_instructions") == 0) {
+        return parse_u64(value, &config->max_instructions);
     }
-    if (strcmp(key, "end_pc") == 0) {
-        return parse_u64(value, &config->end_pc);
+    if (strcmp(key, "entry_pc") == 0) {
+        return parse_u64(value, &config->entry_pc);
     }
     if (strcmp(key, "text_start") == 0) {
         return parse_u64(value, &config->text_start);
@@ -730,18 +669,12 @@ static bool parse_manifest_line(char *line, Config *config)
     if (strncmp(key, "sym.", 4) == 0) {
         NamedAddress *symbol = append_named_address(
             config->symbols, &config->symbol_count, MAX_SYMBOLS, key + 4);
-        if (symbol == NULL) {
-            return false;
-        }
-        return parse_named_addr_value(value, &symbol->addr, &symbol->size);
+        return symbol != NULL && parse_named_addr_value(value, &symbol->addr, &symbol->size);
     }
     if (strncmp(key, "fuzz.", 5) == 0) {
         NamedAddress *symbol = append_named_address(
             config->fuzz_symbols, &config->fuzz_symbol_count, MAX_FUZZ_SYMBOLS, key + 5);
-        if (symbol == NULL) {
-            return false;
-        }
-        return parse_named_addr_value(value, &symbol->addr, &symbol->size);
+        return symbol != NULL && parse_named_addr_value(value, &symbol->addr, &symbol->size);
     }
 
     return true;
@@ -775,10 +708,17 @@ static bool parse_manifest(const char *path, Config *config)
 static bool validate_config(const Config *config)
 {
     if (config->technique[0] == '\0' || config->language[0] == '\0'
-        || config->campaign[0] == '\0' || config->csv_path[0] == '\0'
-        || config->done_path[0] == '\0' || config->iterations == 0
-        || config->start_pc == 0 || config->end_pc == 0) {
-        plugin_log("qemu-ft-fuzz: manifest missing required fields\n");
+        || config->campaign[0] == '\0' || config->fault_mode[0] == '\0'
+        || config->fault_domain[0] == '\0' || config->raw_result_path[0] == '\0'
+        || config->done_path[0] == '\0' || config->entry_pc == 0
+        || config->text_end <= config->text_start) {
+        plugin_log("qemu-ft-fuzz: manifest missing required single-shot fields\n");
+        return false;
+    }
+    if (find_symbol("harness_trial_seed") == NULL
+        || find_symbol("harness_done") == NULL
+        || find_symbol("harness_fault_window_open") == NULL) {
+        plugin_log("qemu-ft-fuzz: manifest missing required ABI symbols\n");
         return false;
     }
     return true;
@@ -816,27 +756,16 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
         return -1;
     }
 
-    g.technique = parse_technique(g.config.technique);
-    g.mode = parse_mode(g.config.campaign);
-    g.rng_state = g.config.seed;
+    g.mode = parse_mode(g.config.fault_mode);
+    g.rng_state = g.config.trial_seed;
     if (g.rng_state == 0) {
         g.rng_state = UINT64_C(0x4d595df4d0f33173);
     }
-    if (g.config.text_end == 0) {
-        g.config.text_end = UINT64_MAX;
-    }
-
-    g.csv = fopen(g.config.csv_path, "w");
-    if (g.csv == NULL) {
-        plugin_log2("qemu-ft-fuzz: could not open csv: ", g.config.csv_path);
-        return -1;
-    }
-    write_csv_header();
+    reset_fault_record();
 
     qemu_plugin_register_vcpu_init_cb(id, on_vcpu_init);
     qemu_plugin_register_vcpu_tb_trans_cb(id, on_tb_trans);
-    qemu_plugin_register_atexit_cb(id, on_atexit, NULL);
 
-    plugin_log("qemu-ft-fuzz: installed\n");
+    plugin_log("qemu-ft-fuzz: installed single-shot mode\n");
     return 0;
 }
