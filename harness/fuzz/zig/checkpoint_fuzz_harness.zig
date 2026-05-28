@@ -1,62 +1,38 @@
+const checker = @import("checker");
 const checkpoint = @import("checkpoint");
 const fuzz = @import("fuzz_abi.zig");
-const mirror = @import("checked_record_mirror.zig");
 
-export var harness_fuzz_checkpoint_active_tag: u32 = 0;
-export var harness_fuzz_checkpoint_active_value: u32 = 0;
-export var harness_fuzz_checkpoint_active_min: u32 = 0;
-export var harness_fuzz_checkpoint_active_max: u32 = 0;
-export var harness_fuzz_checkpoint_active_length: u32 = 0;
-export var harness_fuzz_checkpoint_active_capacity: u32 = 0;
-export var harness_fuzz_checkpoint_active_checksum: u32 = 0;
-export var harness_fuzz_checkpoint_saved_tag: u32 = 0;
-export var harness_fuzz_checkpoint_saved_value: u32 = 0;
-export var harness_fuzz_checkpoint_saved_min: u32 = 0;
-export var harness_fuzz_checkpoint_saved_max: u32 = 0;
-export var harness_fuzz_checkpoint_saved_length: u32 = 0;
-export var harness_fuzz_checkpoint_saved_capacity: u32 = 0;
-export var harness_fuzz_checkpoint_saved_checksum: u32 = 0;
+export var harness_fuzz_checkpoint_state: checkpoint.CheckpointedRecord = undefined;
 
-const ptrs = mirror.CheckpointedPtrs{
-    .active = .{
-        .tag = &harness_fuzz_checkpoint_active_tag,
-        .value = &harness_fuzz_checkpoint_active_value,
-        .min = &harness_fuzz_checkpoint_active_min,
-        .max = &harness_fuzz_checkpoint_active_max,
-        .length = &harness_fuzz_checkpoint_active_length,
-        .capacity = &harness_fuzz_checkpoint_active_capacity,
-        .checksum = &harness_fuzz_checkpoint_active_checksum,
-    },
-    .saved = .{
-        .tag = &harness_fuzz_checkpoint_saved_tag,
-        .value = &harness_fuzz_checkpoint_saved_value,
-        .min = &harness_fuzz_checkpoint_saved_min,
-        .max = &harness_fuzz_checkpoint_saved_max,
-        .length = &harness_fuzz_checkpoint_saved_length,
-        .capacity = &harness_fuzz_checkpoint_saved_capacity,
-        .checksum = &harness_fuzz_checkpoint_saved_checksum,
-    },
-};
+fn sampleInitialValue(rng: *u64) u32 {
+    return 100 + (fuzz.randomU32(rng) % 700);
+}
+
+fn sampleRecord(value: u32) checker.CheckedRecord {
+    return checker.CheckedRecord.init(.sample, value, 0, 1000, 6, 16);
+}
 
 export fn harness_main() callconv(.c) noreturn {
     var rng = fuzz.seedState();
-    const initial = mirror.sampleInitialValue(&rng);
-    const expected = mirror.sampleInitialValue(&rng);
-    var state = checkpoint.CheckpointedRecord.init(mirror.sampleRecord(initial));
+    const initial = sampleInitialValue(&rng);
+    const expected = sampleInitialValue(&rng);
 
     fuzz.store32(&fuzz.harness_expected, expected);
-    _ = state.capture();
-    state.active.value = expected;
-    state.active.refreshChecksum();
-    mirror.mirrorCheckpointed(ptrs, &state);
+    harness_fuzz_checkpoint_state = checkpoint.CheckpointedRecord.init(sampleRecord(initial));
+    _ = harness_fuzz_checkpoint_state.capture();
+    harness_fuzz_checkpoint_state.active.value = expected;
+    harness_fuzz_checkpoint_state.active.refreshChecksum();
 
-    state = mirror.loadCheckpointed(ptrs);
     fuzz.openFaultWindow();
-    const result = state.commitOrRestart();
+    // never_inline keeps loads of harness_fuzz_checkpoint_state from being hoisted across the window.
+    const result = @call(
+        .never_inline,
+        checkpoint.CheckpointedRecord.commitOrRestart,
+        .{&harness_fuzz_checkpoint_state},
+    );
     fuzz.closeFaultWindow();
-    mirror.mirrorCheckpointed(ptrs, &state);
 
-    fuzz.store32(&fuzz.harness_output, state.active.value);
+    fuzz.store32(&fuzz.harness_output, harness_fuzz_checkpoint_state.active.value);
     fuzz.store32(&fuzz.harness_error_code, result.status.code());
     if (result.status != .committed or
         result.active_check != .ok or
@@ -64,10 +40,14 @@ export fn harness_main() callconv(.c) noreturn {
     {
         fuzz.store32(&fuzz.harness_detected, 1);
     }
-    if (fuzz.load32(&fuzz.harness_detected) != 0 and state.active.value == expected) {
+    if (fuzz.load32(&fuzz.harness_detected) != 0 and
+        harness_fuzz_checkpoint_state.active.value == expected)
+    {
         fuzz.store32(&fuzz.harness_corrected, 1);
     }
-    if (result.status != .committed and state.active.value != expected) {
+    if (result.status != .committed and
+        harness_fuzz_checkpoint_state.active.value != expected)
+    {
         fuzz.store32(&fuzz.harness_safe_state, 1);
     }
 

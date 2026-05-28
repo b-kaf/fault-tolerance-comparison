@@ -1,3 +1,0 @@
-technique,implementation,campaign,iteration,result,pass_delta,failure_delta,stage,stage_name,fault_target,fault_name,fault_value,expected,value,status,status_name,passes,failures,seed,fault_mode,target_kind,target_name,inject_pc,inject_offset,target_addr,bit,before,after,qemu_plugin_api
-tmr,zig,ram-symbol-bitflip,1,pass,1,0,3,after_read,0,none,0,3295508913,3295508913,0,ok,1,0,4660,ram-symbol-bitflip,ram-symbol,harness_zig_tmr_a,0x1c414,0,0x20000000,31,3295508913,1148025265,5
-tmr,zig,ram-symbol-bitflip,2,pass,1,0,3,after_read,0,none,0,1714746210,1714746210,0,ok,2,0,4660,ram-symbol-bitflip,ram-symbol,harness_zig_tmr_c,0x1c414,0,0x2000002c,29,1714746210,1177875298,5

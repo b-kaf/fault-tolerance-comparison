@@ -1,9 +1,7 @@
 const control_flow = @import("control_flow");
 const fuzz = @import("fuzz_abi.zig");
 
-export var harness_fuzz_control_phase: u32 = 0;
-export var harness_fuzz_control_signature: u32 = 0;
-export var harness_fuzz_control_transitions: u32 = 0;
+export var harness_fuzz_control_monitor: control_flow.Monitor = undefined;
 
 fn sampleInput(rng: *u64) u32 {
     return 100 + (fuzz.randomU32(rng) % 900);
@@ -11,20 +9,6 @@ fn sampleInput(rng: *u64) u32 {
 
 fn computeValue(input: u32) u32 {
     return input + 7;
-}
-
-fn loadMonitor() control_flow.Monitor {
-    return .{
-        .phase = fuzz.load32(&harness_fuzz_control_phase),
-        .signature = fuzz.load32(&harness_fuzz_control_signature),
-        .transitions = fuzz.load32(&harness_fuzz_control_transitions),
-    };
-}
-
-fn mirrorMonitor(monitor: *const control_flow.Monitor) void {
-    fuzz.store32(&harness_fuzz_control_phase, monitor.phase);
-    fuzz.store32(&harness_fuzz_control_signature, monitor.signature);
-    fuzz.store32(&harness_fuzz_control_transitions, monitor.transitions);
 }
 
 fn recordStatus(status: control_flow.ControlStatus) bool {
@@ -36,43 +20,43 @@ fn recordStatus(status: control_flow.ControlStatus) bool {
     return true;
 }
 
-fn advance(expected_from: control_flow.Phase, next_phase: control_flow.Phase) bool {
-    var monitor = loadMonitor();
+fn advance(
+    monitor: *control_flow.Monitor,
+    expected_from: control_flow.Phase,
+    next_phase: control_flow.Phase,
+) bool {
     const status = monitor.advance(expected_from, next_phase);
-    mirrorMonitor(&monitor);
     return recordStatus(status);
 }
 
-fn runControlFlow(input: u32) void {
-    if (!advance(.start, .read_input)) {
+fn runControlFlow(monitor: *control_flow.Monitor, input: u32) void {
+    if (!advance(monitor, .start, .read_input)) {
         fuzz.store32(&fuzz.harness_safe_state, 1);
         return;
     }
-    if (!advance(.read_input, .compute)) {
+    if (!advance(monitor, .read_input, .compute)) {
         fuzz.store32(&fuzz.harness_safe_state, 1);
         return;
     }
 
     const computed = computeValue(input);
 
-    if (!advance(.compute, .validate)) {
+    if (!advance(monitor, .compute, .validate)) {
         fuzz.store32(&fuzz.harness_safe_state, 1);
         return;
     }
-    if (!advance(.validate, .commit)) {
+    if (!advance(monitor, .validate, .commit)) {
         fuzz.store32(&fuzz.harness_safe_state, 1);
         return;
     }
 
     fuzz.store32(&fuzz.harness_output, computed);
 
-    if (!advance(.commit, .done)) {
+    if (!advance(monitor, .commit, .done)) {
         return;
     }
 
-    var monitor = loadMonitor();
     const status = monitor.finish();
-    mirrorMonitor(&monitor);
     _ = recordStatus(status);
 }
 
@@ -80,13 +64,13 @@ export fn harness_main() callconv(.c) noreturn {
     var rng = fuzz.seedState();
     const input = sampleInput(&rng);
     const expected = computeValue(input);
-    var monitor = control_flow.Monitor.init();
 
     fuzz.store32(&fuzz.harness_expected, expected);
-    mirrorMonitor(&monitor);
+    harness_fuzz_control_monitor = control_flow.Monitor.init();
 
     fuzz.openFaultWindow();
-    runControlFlow(input);
+    // never_inline keeps loads of harness_fuzz_control_monitor from being hoisted across the window.
+    @call(.never_inline, runControlFlow, .{ &harness_fuzz_control_monitor, input });
     fuzz.closeFaultWindow();
 
     if (fuzz.load32(&fuzz.harness_detected) != 0 and

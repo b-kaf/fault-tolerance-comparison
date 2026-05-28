@@ -11,7 +11,7 @@ pub fn Tmr(comptime T: type) type {
         };
     }
 
-    return struct {
+    return extern struct {
         a: T,
         b: T,
         c: T,

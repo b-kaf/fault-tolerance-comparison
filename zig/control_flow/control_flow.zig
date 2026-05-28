@@ -28,7 +28,7 @@ pub const Phase = enum(u32) {
     }
 };
 
-pub const Monitor = struct {
+pub const Monitor = extern struct {
     phase: u32,
     signature: u32,
     transitions: u32,

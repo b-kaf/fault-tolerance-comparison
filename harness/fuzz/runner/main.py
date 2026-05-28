@@ -65,7 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     parser.add_argument("--language", choices=("c", "zig"), required=True)
-    parser.add_argument("--campaign", choices=CAMPAIGN_CHOICES, default="reg-bitflip-window")
+    parser.add_argument(
+        "--campaign", choices=CAMPAIGN_CHOICES, default="reg-bitflip")
     parser.add_argument(
         "--trials",
         "--iterations",
@@ -92,7 +93,8 @@ def resolve_config(
 ) -> RunConfig:
     plugin_text = os.environ.get("QEMU_FT_FUZZ_PLUGIN", "")
     if not plugin_text:
-        parser.error("QEMU_FT_FUZZ_PLUGIN is required in the environment or .env")
+        parser.error(
+            "QEMU_FT_FUZZ_PLUGIN is required in the environment or .env")
 
     plugin = Path(plugin_text)
     if not plugin.is_file():
@@ -100,7 +102,8 @@ def resolve_config(
 
     elf = harness_elf_path(ns.technique, ns.language)
     if not elf.is_file():
-        parser.error(f"inferred ELF not found: {elf} (run `zig build fuzz-harness` first)")
+        parser.error(
+            f"inferred ELF not found: {elf} (run `zig build fuzz-harness` first)")
 
     return RunConfig(
         technique=ns.technique,
@@ -160,7 +163,8 @@ def run(config: RunConfig) -> int:
                 counts[row["result_class"]] += 1
                 writer.write_row(row)
 
-    summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+    summary = ", ".join(f"{name}={count}" for name,
+                        count in sorted(counts.items()))
     summary = summary or "no trials"
     if config.csv is None:
         print(f"summary: {summary}", file=sys.stderr)

@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 CAMPAIGN_CHOICES: tuple[str, ...] = (
     "none",
-    "ram-symbol-bitflip",
-    "reg-bitflip-window",
+    "ram-bitflip",
+    "reg-bitflip",
 )
 
 
@@ -22,16 +22,16 @@ class Campaign:
 
 CAMPAIGNS: dict[str, Campaign] = {
     "none": Campaign("none", "none", "none"),
-    "ram-symbol-bitflip": Campaign(
-        "ram-symbol-bitflip",
-        "ram-symbol-bitflip",
+    "ram-bitflip": Campaign(
+        "ram-bitflip",
+        "ram-bitflip",
         "ram",
         requires_injection=True,
         requires_fuzz_symbols=True,
     ),
-    "reg-bitflip-window": Campaign(
-        "reg-bitflip-window",
-        "reg-bitflip-window",
+    "reg-bitflip": Campaign(
+        "reg-bitflip",
+        "reg-bitflip",
         "register",
         requires_injection=True,
     ),
@@ -43,7 +43,8 @@ def campaign(name: str) -> Campaign:
         return CAMPAIGNS[name]
     except KeyError as exc:
         choices = ", ".join(CAMPAIGN_CHOICES)
-        raise ValueError(f"unsupported campaign {name!r}; expected one of: {choices}") from exc
+        raise ValueError(
+            f"unsupported campaign {name!r}; expected one of: {choices}") from exc
 
 
 def derive_trial_seed(
@@ -58,6 +59,7 @@ def derive_trial_seed(
         f"{campaign_seed:016x}:{trial_id}:{technique}:"
         f"{implementation}:{campaign_name}"
     ).encode("utf-8")
-    digest = hashlib.blake2b(payload, digest_size=8, person=b"ft-single").digest()
+    digest = hashlib.blake2b(payload, digest_size=8,
+                             person=b"ft-single").digest()
     seed = int.from_bytes(digest, "little")
     return seed or 0x9E3779B97F4A7C15

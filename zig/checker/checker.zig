@@ -84,7 +84,7 @@ pub fn requireSampleTag(raw: u32) CheckStatus {
     };
 }
 
-pub const CheckedRecord = struct {
+pub const CheckedRecord = extern struct {
     tag: u32,
     value: u32,
     min: u32,

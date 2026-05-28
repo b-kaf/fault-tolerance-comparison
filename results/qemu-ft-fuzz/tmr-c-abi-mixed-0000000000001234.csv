@@ -1,6 +1,0 @@
-technique,implementation,campaign,iteration,stage,fault_target,fault_value,initial_value,expected,status,restart_status,recovery_status,control_status,terminal_status,active_check,checkpoint_check,primary_check,restore_check,alternate_check,phase,signature,transitions,value,active_value,checkpoint_value,passes,failures,seed,fault_mode,inject_pc,inject_offset,target_kind,target_name,target_addr,bit,before,after,qemu_plugin_api
-tmr,c,abi-mixed,1,3,0,0,0,3295508913,0,0,0,0,0,0,0,0,0,0,0,0,0,3295508913,0,0,1,0,4660,abi,0x6c,0,harness-abi,harness_fault_target,0x0,0,0,0,5
-tmr,c,abi-mixed,2,3,1,2580221085,0,1714746210,0,0,0,0,0,0,0,0,0,0,0,0,0,1714746210,0,0,2,0,4660,abi,0x6c,0,harness-abi,harness_fault_target,0x0,0,0,2580221085,5
-tmr,c,abi-mixed,3,3,2,2477520588,0,2164026643,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0,4660,abi,0x6c,0,harness-abi,harness_fault_target,0x0,0,0,2477520588,5
-tmr,c,abi-mixed,4,3,0,0,0,579331780,0,0,0,0,0,0,0,0,0,0,0,0,0,579331780,0,0,4,0,4660,abi,0x6c,0,harness-abi,harness_fault_target,0x0,0,0,0,5
-tmr,c,abi-mixed,5,3,1,2997919626,0,1297047669,0,0,0,0,0,0,0,0,0,0,0,0,0,1297047669,0,0,5,0,4660,abi,0x6c,0,harness-abi,harness_fault_target,0x0,0,0,2997919626,5

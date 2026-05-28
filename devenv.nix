@@ -34,6 +34,10 @@ in
   # services.postgres.enable = true;
 
   # https://devenv.sh/scripts/
+  scripts.build-plugin.exec = ''
+    nix-build -E 'with import <nixpkgs> {}; callPackage ./nix/qemu-ft-fuzz-plugin.nix {}'
+  '';
+
   scripts.harness-build.exec = ''
     zig build harness
   '';
@@ -61,12 +65,12 @@ in
 
     language="''${1:-}"
     technique="''${2:-}"
-    campaign="''${3:-reg-bitflip-window}"
+    campaign="''${3:-reg-bitflip}"
     trials="''${4:-20}"
     seed="''${5:-0xC0DEC0DE}"
 
     if [ -z "$language" ] || [ -z "$technique" ]; then
-      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|ram-symbol-bitflip|reg-bitflip-window] [trials] [seed]" >&2
+      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|ram-bitflip|reg-bitflip] [trials] [seed]" >&2
       exit 2
     fi
 

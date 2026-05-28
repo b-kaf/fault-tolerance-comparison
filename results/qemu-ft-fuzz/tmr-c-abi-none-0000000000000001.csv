@@ -1,3 +1,0 @@
-technique,implementation,campaign,iteration,stage,fault_target,fault_value,initial_value,expected,status,restart_status,recovery_status,control_status,terminal_status,active_check,checkpoint_check,primary_check,restore_check,alternate_check,phase,signature,transitions,value,active_value,checkpoint_value,passes,failures,seed,fault_mode,inject_pc,inject_offset,target_kind,target_name,target_addr,bit,before,after,qemu_plugin_api
-tmr,c,abi-none,1,3,0,0,0,3295508913,0,0,0,0,0,0,0,0,0,0,0,0,0,3295508913,0,0,1,0,1,abi,0x6c,0,harness-abi,harness_fault_target,0x0,0,0,0,5
-tmr,c,abi-none,2,3,0,0,0,1714746210,0,0,0,0,0,0,0,0,0,0,0,0,0,1714746210,0,0,2,0,1,abi,0x6c,0,harness-abi,harness_fault_target,0x0,0,0,0,5

@@ -17,7 +17,7 @@ pub const RestartResult = struct {
     checkpoint_check: checker.CheckStatus,
 };
 
-pub const CheckpointedRecord = struct {
+pub const CheckpointedRecord = extern struct {
     active: checker.CheckedRecord,
     checkpoint: checker.CheckedRecord,
 
