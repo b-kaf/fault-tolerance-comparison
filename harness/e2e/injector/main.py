@@ -1,20 +1,33 @@
+from __future__ import annotations
+
 import argparse
+import os
 import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from dotenv import load_dotenv
+from harness_shared.result_format import write_e2e_result_csv
+from harness_shared.support import (
+    find_repo_root,
+    positive_int,
+    qemu_mps2_an386_command,
+    terminate_process,
+)
 from injector.gdbmi import GdbMi
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = find_repo_root(__file__)
 HARNESS_OUTPUT_DIR = REPO_ROOT / "zig-out" / "harness"
-HARNESS_DIR = REPO_ROOT / "harness"
-sys.path.insert(0, str(HARNESS_DIR))
+QEMU = "qemu-system-arm"
+GDB = "gdb"
+GDB_HOST = "127.0.0.1"
 
-from result_format import write_result_csv
+load_dotenv(override=False)
 
 FAULT_NONE = 0
 FAULT_COPY_A = 1
@@ -114,42 +127,51 @@ CONTROL_FLOW_CHOICES: tuple[str, ...] = tuple(
 ) + ("control-mixed-faults",)
 
 
+@dataclass(frozen=True)
+class RunConfig:
+    iterations: int
+    technique: str
+    language: str
+    campaign: str
+    csv: Path | None
+    port: int
+    connect_timeout: float
+    stop_timeout: float
+    qemu_startup_timeout: float
+    elf: Path
+
+    @property
+    def host(self) -> str:
+        return GDB_HOST
+
+    @property
+    def gdb(self) -> str:
+        return GDB
+
+
 def harness_elf_path(technique: str, language: str) -> Path:
     return HARNESS_OUTPUT_DIR / f"{technique}-harness-{language}-m4.elf"
 
 
-def qemu_command(args: argparse.Namespace) -> list[str]:
-    return [
-        args.qemu,
-        "-M",
-        "mps2-an386",
-        "-cpu",
-        "cortex-m4",
-        "-kernel",
-        str(args.elf),
-        "-nographic",
-        "-monitor",
-        "none",
-        "-serial",
-        "none",
+def qemu_command(config: RunConfig) -> list[str]:
+    return qemu_mps2_an386_command(QEMU, config.elf) + [
         "-S",
         "-gdb",
-        f"tcp::{args.port}",
+        f"tcp::{config.port}",
     ]
 
 
-def start_qemu(args: argparse.Namespace) -> subprocess.Popen[bytes]:
+def start_qemu(config: RunConfig) -> subprocess.Popen[bytes]:
     proc = subprocess.Popen(
-        qemu_command(args),
+        qemu_command(config),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )
     try:
-        wait_for_gdb_port(proc, args.host, args.port,
-                          args.qemu_startup_timeout)
+        wait_for_gdb_port(proc, config.host, config.port,
+                          config.qemu_startup_timeout)
     except BaseException:
-        proc.kill()
-        proc.wait(timeout=2)
+        terminate_process(proc)
         raise
     return proc
 
@@ -208,33 +230,33 @@ def choose_control_flow_fault(campaign: str, iteration: int) -> tuple[int, int]:
     return CONTROL_FLOW_CAMPAIGNS[key]
 
 
-def run_campaign(args: argparse.Namespace) -> int:
-    if args.technique == "checkpoint":
-        return run_checkpoint_campaign(args)
-    if args.technique == "recovery-block":
-        return run_recovery_block_campaign(args)
-    if args.technique == "control-flow":
-        return run_control_flow_campaign(args)
-    return run_tmr_campaign(args)
+def run_campaign(config: RunConfig) -> int:
+    if config.technique == "checkpoint":
+        return run_checkpoint_campaign(config)
+    if config.technique == "recovery-block":
+        return run_recovery_block_campaign(config)
+    if config.technique == "control-flow":
+        return run_control_flow_campaign(config)
+    return run_tmr_campaign(config)
 
 
-def run_tmr_campaign(args: argparse.Namespace) -> int:
-    qemu = start_qemu(args) if args.launch_qemu else None
+def run_tmr_campaign(config: RunConfig) -> int:
+    qemu = start_qemu(config)
     rows = []
-    implementation = args.language
+    implementation = config.language
 
     try:
-        gdb = GdbMi(args)
+        gdb = GdbMi(config)
         try:
             breakpoints = gdb.install_tmr_breakpoints()
 
-            for _ in range(args.iterations):
+            for _ in range(config.iterations):
                 gdb.continue_until_breakpoint(breakpoints.after_init)
 
                 iteration = gdb.read_u32("harness_iteration")
                 expected = gdb.read_u32("harness_last_expected")
                 fault_target, fault_value = choose_tmr_fault(
-                    args.campaign, iteration, expected)
+                    config.campaign, iteration, expected)
                 gdb.write_u32("harness_fault_value", fault_value)
                 gdb.write_u32("harness_fault_target", fault_target)
 
@@ -243,7 +265,7 @@ def run_tmr_campaign(args: argparse.Namespace) -> int:
                 row = {
                     "technique": "tmr",
                     "implementation": implementation,
-                    "campaign": args.campaign,
+                    "campaign": config.campaign,
                     "iteration": iteration,
                     "stage": gdb.read_u32("harness_stage"),
                     "fault_target": gdb.read_u32("harness_last_fault_target"),
@@ -259,33 +281,28 @@ def run_tmr_campaign(args: argparse.Namespace) -> int:
             gdb.close()
     finally:
         if qemu is not None:
-            qemu.terminate()
-            try:
-                qemu.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                qemu.kill()
-                qemu.wait(timeout=2)
+            terminate_process(qemu)
 
-    write_rows(args.csv, rows)
+    write_rows(config.csv, rows)
     return 0 if rows and rows[-1]["failures"] == 0 else 1
 
 
-def run_checkpoint_campaign(args: argparse.Namespace) -> int:
-    qemu = start_qemu(args) if args.launch_qemu else None
+def run_checkpoint_campaign(config: RunConfig) -> int:
+    qemu = start_qemu(config)
     rows = []
-    implementation = args.language
+    implementation = config.language
 
     try:
-        gdb = GdbMi(args)
+        gdb = GdbMi(config)
         try:
             breakpoints = gdb.install_checkpoint_breakpoints()
 
-            for _ in range(args.iterations):
+            for _ in range(config.iterations):
                 gdb.continue_until_breakpoint(breakpoints.after_mutation)
 
                 iteration = gdb.read_u32("harness_iteration")
                 fault_target, fault_value = choose_checkpoint_fault(
-                    args.campaign, iteration)
+                    config.campaign, iteration)
                 gdb.write_u32("harness_fault_value", fault_value)
                 gdb.write_u32("harness_fault_target", fault_target)
 
@@ -294,7 +311,7 @@ def run_checkpoint_campaign(args: argparse.Namespace) -> int:
                 row = {
                     "technique": "checkpoint",
                     "implementation": implementation,
-                    "campaign": args.campaign,
+                    "campaign": config.campaign,
                     "iteration": iteration,
                     "stage": gdb.read_u32("harness_stage"),
                     "fault_target": gdb.read_u32("harness_last_fault_target"),
@@ -316,33 +333,28 @@ def run_checkpoint_campaign(args: argparse.Namespace) -> int:
             gdb.close()
     finally:
         if qemu is not None:
-            qemu.terminate()
-            try:
-                qemu.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                qemu.kill()
-                qemu.wait(timeout=2)
+            terminate_process(qemu)
 
-    write_rows(args.csv, rows)
+    write_rows(config.csv, rows)
     return 0 if rows and rows[-1]["failures"] == 0 else 1
 
 
-def run_recovery_block_campaign(args: argparse.Namespace) -> int:
-    qemu = start_qemu(args) if args.launch_qemu else None
+def run_recovery_block_campaign(config: RunConfig) -> int:
+    qemu = start_qemu(config)
     rows = []
-    implementation = args.language
+    implementation = config.language
 
     try:
-        gdb = GdbMi(args)
+        gdb = GdbMi(config)
         try:
             breakpoints = gdb.install_recovery_block_breakpoints()
 
-            for _ in range(args.iterations):
+            for _ in range(config.iterations):
                 gdb.continue_until_breakpoint(breakpoints.before_recovery)
 
                 iteration = gdb.read_u32("harness_iteration")
                 fault_target, fault_value = choose_recovery_block_fault(
-                    args.campaign, iteration)
+                    config.campaign, iteration)
                 gdb.write_u32("harness_fault_value", fault_value)
                 gdb.write_u32("harness_fault_target", fault_target)
 
@@ -351,7 +363,7 @@ def run_recovery_block_campaign(args: argparse.Namespace) -> int:
                 row = {
                     "technique": "recovery-block",
                     "implementation": implementation,
-                    "campaign": args.campaign,
+                    "campaign": config.campaign,
                     "iteration": iteration,
                     "stage": gdb.read_u32("harness_stage"),
                     "fault_target": gdb.read_u32("harness_last_fault_target"),
@@ -375,33 +387,28 @@ def run_recovery_block_campaign(args: argparse.Namespace) -> int:
             gdb.close()
     finally:
         if qemu is not None:
-            qemu.terminate()
-            try:
-                qemu.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                qemu.kill()
-                qemu.wait(timeout=2)
+            terminate_process(qemu)
 
-    write_rows(args.csv, rows)
+    write_rows(config.csv, rows)
     return 0 if rows and rows[-1]["failures"] == 0 else 1
 
 
-def run_control_flow_campaign(args: argparse.Namespace) -> int:
-    qemu = start_qemu(args) if args.launch_qemu else None
+def run_control_flow_campaign(config: RunConfig) -> int:
+    qemu = start_qemu(config)
     rows = []
-    implementation = args.language
+    implementation = config.language
 
     try:
-        gdb = GdbMi(args)
+        gdb = GdbMi(config)
         try:
             breakpoints = gdb.install_control_flow_breakpoints()
 
-            for _ in range(args.iterations):
+            for _ in range(config.iterations):
                 gdb.continue_until_breakpoint(breakpoints.before_control_flow)
 
                 iteration = gdb.read_u32("harness_iteration")
                 fault_target, fault_value = choose_control_flow_fault(
-                    args.campaign, iteration)
+                    config.campaign, iteration)
                 gdb.write_u32("harness_fault_value", fault_value)
                 gdb.write_u32("harness_fault_target", fault_target)
 
@@ -410,7 +417,7 @@ def run_control_flow_campaign(args: argparse.Namespace) -> int:
                 row = {
                     "technique": "control-flow",
                     "implementation": implementation,
-                    "campaign": args.campaign,
+                    "campaign": config.campaign,
                     "iteration": iteration,
                     "stage": gdb.read_u32("harness_stage"),
                     "fault_target": gdb.read_u32("harness_last_fault_target"),
@@ -431,26 +438,25 @@ def run_control_flow_campaign(args: argparse.Namespace) -> int:
             gdb.close()
     finally:
         if qemu is not None:
-            qemu.terminate()
-            try:
-                qemu.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                qemu.kill()
-                qemu.wait(timeout=2)
+            terminate_process(qemu)
 
-    write_rows(args.csv, rows)
+    write_rows(config.csv, rows)
     return 0 if rows and rows[-1]["failures"] == 0 else 1
 
 
 def write_rows(path: Path | None, rows: list[dict[str, object]]) -> None:
-    write_result_csv(path, rows)
+    write_e2e_result_csv(path, rows)
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run QEMU/GDB-RSP fault-injection campaigns against harness firmware.",
     )
-    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument(
+        "--iterations",
+        type=positive_int,
+        default=int(os.environ.get("HARNESS_E2E_ITERATIONS", "20"), 0),
+    )
     parser.add_argument(
         "--technique",
         choices=("tmr", "checkpoint", "recovery-block", "control-flow"),
@@ -476,68 +482,80 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
         default="mixed",
     )
-    parser.add_argument("--csv", type=Path,
-                        help="Write campaign results to this CSV path.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=1234)
-    parser.add_argument("--connect-timeout", type=float, default=10.0)
-    parser.add_argument("--stop-timeout", type=float, default=10.0)
-    parser.add_argument("--launch-qemu", action="store_true",
-                        help="Launch QEMU before connecting.")
-    parser.add_argument("--qemu", default="qemu-system-arm")
-    parser.add_argument("--gdb", default="gdb")
     parser.add_argument(
-        "--qemu-startup-timeout",
-        type=float,
-        default=10.0,
-        help="Seconds to wait for QEMU's GDB-RSP port to accept connections.",
+        "--csv",
+        type=Path,
+        help="Write campaign results to this CSV path instead of stdout.",
     )
-    args = parser.parse_args(argv)
+    return parser
 
-    if args.technique == "tmr" and (
-        args.campaign in CHECKPOINT_SAMPLE_CHOICES
-        or args.campaign in RECOVERY_BLOCK_CHOICES
-        or args.campaign in CONTROL_FLOW_CHOICES
+
+def resolve_config(
+    parser: argparse.ArgumentParser,
+    ns: argparse.Namespace,
+) -> RunConfig:
+    if ns.technique == "tmr" and (
+        ns.campaign in CHECKPOINT_SAMPLE_CHOICES
+        or ns.campaign in RECOVERY_BLOCK_CHOICES
+        or ns.campaign in CONTROL_FLOW_CHOICES
     ):
         parser.error("checkpoint-* campaigns require --technique checkpoint; "
                      "recovery-* campaigns require --technique recovery-block; "
                      "control-* campaigns require --technique control-flow")
-    if args.technique == "checkpoint" and (
-        args.campaign in ("single-a", "all-distinct")
-        or args.campaign in RECOVERY_BLOCK_CHOICES
-        or args.campaign in CONTROL_FLOW_CHOICES
+    if ns.technique == "checkpoint" and (
+        ns.campaign in ("single-a", "all-distinct")
+        or ns.campaign in RECOVERY_BLOCK_CHOICES
+        or ns.campaign in CONTROL_FLOW_CHOICES
     ):
         parser.error("single-a/all-distinct campaigns require --technique tmr; "
                      "recovery-* campaigns require --technique recovery-block; "
                      "control-* campaigns require --technique control-flow")
-    if args.technique == "recovery-block" and (
-        args.campaign in ("single-a", "all-distinct")
-        or args.campaign in CHECKPOINT_SAMPLE_CHOICES
-        or args.campaign in CONTROL_FLOW_CHOICES
+    if ns.technique == "recovery-block" and (
+        ns.campaign in ("single-a", "all-distinct")
+        or ns.campaign in CHECKPOINT_SAMPLE_CHOICES
+        or ns.campaign in CONTROL_FLOW_CHOICES
     ):
         parser.error("single-a/all-distinct campaigns require --technique tmr; "
                      "checkpoint-* campaigns require --technique checkpoint; "
                      "control-* campaigns require --technique control-flow")
-    if args.technique == "control-flow" and (
-        args.campaign in ("single-a", "all-distinct")
-        or args.campaign in CHECKPOINT_SAMPLE_CHOICES
-        or args.campaign in RECOVERY_BLOCK_CHOICES
+    if ns.technique == "control-flow" and (
+        ns.campaign in ("single-a", "all-distinct")
+        or ns.campaign in CHECKPOINT_SAMPLE_CHOICES
+        or ns.campaign in RECOVERY_BLOCK_CHOICES
     ):
         parser.error("single-a/all-distinct campaigns require --technique tmr; "
                      "checkpoint-* campaigns require --technique checkpoint; "
                      "recovery-* campaigns require --technique recovery-block")
 
-    args.elf = harness_elf_path(args.technique, args.language)
-    if not args.elf.is_file():
-        parser.error(f"inferred ELF not found: {args.elf} "
+    elf = harness_elf_path(ns.technique, ns.language)
+    if not elf.is_file():
+        parser.error(f"inferred ELF not found: {elf} "
                      "(run `zig build harness` first)")
 
-    return args
+    return RunConfig(
+        iterations=ns.iterations,
+        technique=ns.technique,
+        language=ns.language,
+        campaign=ns.campaign,
+        csv=ns.csv,
+        port=int(os.environ.get("HARNESS_E2E_GDB_PORT", "1234"), 0),
+        connect_timeout=float(os.environ.get("HARNESS_E2E_CONNECT_TIMEOUT", "10.0")),
+        stop_timeout=float(os.environ.get("HARNESS_E2E_STOP_TIMEOUT", "10.0")),
+        qemu_startup_timeout=float(
+            os.environ.get("HARNESS_E2E_QEMU_STARTUP_TIMEOUT", "10.0")
+        ),
+        elf=elf,
+    )
+
+
+def parse_args(argv: list[str]) -> RunConfig:
+    parser = build_parser()
+    return resolve_config(parser, parser.parse_args(argv))
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
-    return run_campaign(args)
+    config = parse_args(sys.argv[1:] if argv is None else argv)
+    return run_campaign(config)
 
 
 if __name__ == "__main__":

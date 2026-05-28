@@ -51,7 +51,6 @@ in
     zig build harness
 
     uv run --directory harness/e2e/injector python main.py \
-      --launch-qemu \
       --language "$language" \
       --technique "$technique" \
       --campaign mixed \

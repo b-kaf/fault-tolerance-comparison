@@ -11,7 +11,6 @@ Run a mixed campaign against the C implementation:
 
 ```sh
 uv run python main.py \
-  --launch-qemu \
   --technique tmr \
   --language c \
   --iterations 20
@@ -21,7 +20,6 @@ Run against the Zig implementation:
 
 ```sh
 uv run python main.py \
-  --launch-qemu \
   --technique tmr \
   --language zig \
   --iterations 20
@@ -31,14 +29,12 @@ Run a checkpoint/restart campaign:
 
 ```sh
 uv run python main.py \
-  --launch-qemu \
   --technique checkpoint \
   --language c \
   --campaign checkpoint-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique checkpoint \
   --language zig \
   --campaign checkpoint-mixed-faults \
@@ -49,14 +45,12 @@ Run a recovery-block campaign:
 
 ```sh
 uv run python main.py \
-  --launch-qemu \
   --technique recovery-block \
   --language c \
   --campaign recovery-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique recovery-block \
   --language zig \
   --campaign recovery-mixed-faults \
@@ -67,14 +61,12 @@ Run a control-flow checking campaign:
 
 ```sh
 uv run python main.py \
-  --launch-qemu \
   --technique control-flow \
   --language c \
   --campaign control-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique control-flow \
   --language zig \
   --campaign control-mixed-faults \
@@ -84,6 +76,9 @@ uv run python main.py \
 Use `--csv <path>` to save campaign output.
 The injector infers the ELF path as
 `zig-out/harness/<technique>-harness-<language>-m4.elf`.
+The injector always launches `qemu-system-arm` and uses `gdb` on localhost.
+Defaults for iterations, GDB port, and timeouts live in `.env`; CLI
+`--iterations` overrides the `.env` value.
 
 Checkpoint campaigns:
 

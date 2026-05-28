@@ -5,5 +5,10 @@ description = "GDB RSP fault injector for the TMR QEMU harness"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "harness-shared",
     "pygdbmi>=0.11.0.0",
+    "python-dotenv>=1.0",
 ]
+
+[tool.uv.sources]
+harness-shared = { path = "../../common/python/harness_shared", editable = true }

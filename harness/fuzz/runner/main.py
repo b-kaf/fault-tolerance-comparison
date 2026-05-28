@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import os
+import sys
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+from harness_shared.result_format import format_fuzz_result_row, open_fuzz_result_csv
+from harness_shared.support import (
+    find_repo_root,
+    parse_u64,
+    positive_int,
+)
 from campaigns import CAMPAIGN_CHOICES, Campaign, campaign, derive_trial_seed
 from classification import ClassificationInput, classify_trial
 from manifest import write_manifest
@@ -21,82 +28,16 @@ from symbols import (
 )
 
 
-def find_repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for parent in (here, *here.parents):
-        if (parent / ".git").exists():
-            return parent
-    raise RuntimeError(f"could not find repo root (no .git ancestor) from {here}")
-
-
-REPO_ROOT = find_repo_root()
+REPO_ROOT = find_repo_root(__file__)
 HARNESS_OUTPUT_DIR = REPO_ROOT / "zig-out" / "harness"
-DEFAULT_RESULTS_DIR = REPO_ROOT / "results" / "qemu-ft-fuzz"
+QEMU = "qemu-system-arm"
+LLVM_NM = "llvm-nm"
 
-CSV_FIELDS = [
-    "technique",
-    "implementation",
-    "trial_id",
-    "trial_seed",
-    "campaign",
-    "campaign_seed",
-    "result_class",
-    "output",
-    "expected",
-    "detected",
-    "corrected",
-    "safe_state",
-    "error_code",
-    "harness_done",
-    "injected",
-    "fault_mode",
-    "fault_domain",
-    "target_kind",
-    "target_name",
-    "target_addr",
-    "inject_pc",
-    "inject_offset",
-    "bit",
-    "before",
-    "after",
-    "process_status",
-    "timeout",
-    "instruction_budget_exhausted",
-    "elapsed_ms",
-    "instructions_executed",
-    "qemu_plugin_api",
-]
-
-FACT_KEY_TO_COLUMN = {
-    "harness_output": "output",
-    "harness_expected": "expected",
-    "harness_detected": "detected",
-    "harness_corrected": "corrected",
-    "harness_safe_state": "safe_state",
-    "harness_error_code": "error_code",
-}
+load_dotenv(override=False)
 
 
 def harness_elf_path(technique: str, implementation: str) -> Path:
     return HARNESS_OUTPUT_DIR / f"{technique}-fuzz-harness-{implementation}-m4.elf"
-
-
-def default_csv_path(
-    technique: str,
-    implementation: str,
-    campaign_name: str,
-    campaign_seed: int,
-) -> Path:
-    return DEFAULT_RESULTS_DIR / (
-        f"{technique}-{implementation}-{campaign_name}-{campaign_seed:016x}.csv"
-    )
-
-
-def parse_u64(value: str) -> int:
-    parsed = int(value, 0)
-    if parsed < 0 or parsed > 0xFFFFFFFFFFFFFFFF:
-        raise argparse.ArgumentTypeError("value must fit in u64")
-    return parsed
 
 
 @dataclass(frozen=True)
@@ -107,11 +48,9 @@ class RunConfig:
     campaign_spec: Campaign
     trials: int
     seed: int
-    csv: Path
+    csv: Path | None
     timeout: float
     max_instructions: int
-    qemu: str
-    llvm_nm: str
     plugin: Path
     elf: Path
 
@@ -127,39 +66,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--language", choices=("c", "zig"), required=True)
     parser.add_argument("--campaign", choices=CAMPAIGN_CHOICES, default="reg-bitflip-window")
-    parser.add_argument("--trials", "--iterations", dest="trials", type=int, default=20)
-    parser.add_argument("--seed", type=parse_u64, default=0xC0DEC0DE)
-    parser.add_argument("--csv", type=Path)
-    parser.add_argument("--timeout", type=float, default=5.0)
-    parser.add_argument("--max-instructions", type=int, default=1_000_000)
-    parser.add_argument("--qemu", default="qemu-system-arm")
-    parser.add_argument("--llvm-nm", default="llvm-nm")
     parser.add_argument(
-        "--plugin",
+        "--trials",
+        "--iterations",
+        dest="trials",
+        type=positive_int,
+        default=int(os.environ.get("HARNESS_FUZZ_TRIALS", "20"), 0),
+    )
+    parser.add_argument(
+        "--seed",
+        type=parse_u64,
+        default=int(os.environ.get("HARNESS_FUZZ_SEED", "0xC0DEC0DE"), 0),
+    )
+    parser.add_argument(
+        "--csv",
         type=Path,
-        default=os.environ.get("QEMU_FT_FUZZ_PLUGIN"),
-        help="Path to qemu-ft-fuzz.so. Defaults to QEMU_FT_FUZZ_PLUGIN.",
+        help="Write campaign results to this CSV path instead of stdout.",
     )
     return parser
 
 
-def resolve_config(parser: argparse.ArgumentParser, ns: argparse.Namespace) -> RunConfig:
-    if ns.trials <= 0:
-        parser.error("--trials must be positive")
-    if ns.max_instructions <= 0:
-        parser.error("--max-instructions must be positive")
-    if ns.plugin is None:
-        parser.error("--plugin is required unless QEMU_FT_FUZZ_PLUGIN is set")
+def resolve_config(
+    parser: argparse.ArgumentParser,
+    ns: argparse.Namespace,
+) -> RunConfig:
+    plugin_text = os.environ.get("QEMU_FT_FUZZ_PLUGIN", "")
+    if not plugin_text:
+        parser.error("QEMU_FT_FUZZ_PLUGIN is required in the environment or .env")
 
-    plugin = Path(ns.plugin)
+    plugin = Path(plugin_text)
     if not plugin.is_file():
         parser.error(f"plugin not found: {plugin}")
 
     elf = harness_elf_path(ns.technique, ns.language)
     if not elf.is_file():
         parser.error(f"inferred ELF not found: {elf} (run `zig build fuzz-harness` first)")
-
-    csv_path = ns.csv or default_csv_path(ns.technique, ns.language, ns.campaign, ns.seed)
 
     return RunConfig(
         technique=ns.technique,
@@ -168,18 +109,18 @@ def resolve_config(parser: argparse.ArgumentParser, ns: argparse.Namespace) -> R
         campaign_spec=campaign(ns.campaign),
         trials=ns.trials,
         seed=ns.seed,
-        csv=csv_path,
-        timeout=ns.timeout,
-        max_instructions=ns.max_instructions,
-        qemu=ns.qemu,
-        llvm_nm=ns.llvm_nm,
+        csv=ns.csv,
+        timeout=float(os.environ.get("HARNESS_FUZZ_TIMEOUT", "5.0")),
+        max_instructions=int(
+            os.environ.get("HARNESS_FUZZ_MAX_INSTRUCTIONS", "1000000"), 0
+        ),
         plugin=plugin,
         elf=elf,
     )
 
 
 def run(config: RunConfig) -> int:
-    symbols = load_symbols(config.elf, config.llvm_nm)
+    symbols = load_symbols(config.elf, LLVM_NM)
     require_trial_abi(symbols)
 
     abi_symbols = selected_abi_symbols(symbols)
@@ -192,13 +133,9 @@ def run(config: RunConfig) -> int:
 
     text_start, text_end = text_range(symbols)
     entry_pc = symbols["harness_main"].address
-    config.csv.parent.mkdir(parents=True, exist_ok=True)
     counts: Counter[str] = Counter()
 
-    with config.csv.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=CSV_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-
+    with open_fuzz_result_csv(config.csv) as writer:
         with tempfile.TemporaryDirectory(prefix="qemu-ft-fuzz-") as tmp:
             tmp_path = Path(tmp)
             for trial_id in range(config.trials):
@@ -221,11 +158,14 @@ def run(config: RunConfig) -> int:
                     trial_seed=trial_seed,
                 )
                 counts[row["result_class"]] += 1
-                writer.writerow(row)
-                file.flush()
+                writer.write_row(row)
 
     summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
-    print(f"wrote {config.csv} ({summary})")
+    summary = summary or "no trials"
+    if config.csv is None:
+        print(f"summary: {summary}", file=sys.stderr)
+    else:
+        print(f"wrote {config.csv} ({summary})")
     return 0
 
 
@@ -266,7 +206,7 @@ def run_one_trial(
     )
 
     process = run_qemu_trial(
-        qemu=config.qemu,
+        qemu=QEMU,
         elf=config.elf,
         plugin=config.plugin,
         manifest=manifest_path,
@@ -304,24 +244,19 @@ def build_csv_row(
             requires_injection=config.campaign_spec.requires_injection,
         )
     )
-    row: dict[str, object] = {
-        "technique": config.technique,
-        "implementation": config.language,
-        "trial_id": trial_id,
-        "trial_seed": f"0x{trial_seed:016x}",
-        "campaign": config.campaign,
-        "campaign_seed": f"0x{config.seed:016x}",
-        "result_class": result_class,
-        "process_status": process.process_status,
-        "timeout": int(process.timeout),
-        "elapsed_ms": process.elapsed_ms,
-    }
-    for fact_key, value in facts.items():
-        column = FACT_KEY_TO_COLUMN.get(fact_key, fact_key)
-        row.setdefault(column, value)
-    for field in CSV_FIELDS:
-        row.setdefault(field, "")
-    return row
+    return format_fuzz_result_row(
+        technique=config.technique,
+        implementation=config.language,
+        trial_id=trial_id,
+        trial_seed=trial_seed,
+        campaign=config.campaign,
+        campaign_seed=config.seed,
+        result_class=result_class,
+        facts=facts,
+        process_status=process.process_status,
+        timeout=process.timeout,
+        elapsed_ms=process.elapsed_ms,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

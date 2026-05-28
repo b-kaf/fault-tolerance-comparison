@@ -1,9 +1,18 @@
-import argparse
 import time
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 
 from pygdbmi.gdbcontroller import GdbController
+
+
+class GdbMiConfig(Protocol):
+    stop_timeout: float
+    gdb: str
+    elf: Path
+    host: str
+    port: int
+    connect_timeout: float
 
 
 def mi_quote(value: str) -> str:
@@ -42,7 +51,7 @@ class ControlFlowBreakpoints:
 
 
 class GdbMi:
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self, args: GdbMiConfig):
         self.stop_timeout = args.stop_timeout
         self.gdb = GdbController(
             command=[
@@ -58,7 +67,10 @@ class GdbMi:
         self._write("-gdb-set confirm off")
         self._write("-gdb-set pagination off")
         self._write("set architecture armv7e-m", allow_error=True)
-        self._write(f"-target-select remote {args.host}:{args.port}", timeout=args.connect_timeout)
+        self._write(
+            f"-target-select remote {args.host}:{args.port}",
+            timeout=args.connect_timeout,
+        )
 
     def close(self) -> None:
         self.gdb.exit()

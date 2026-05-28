@@ -3,4 +3,10 @@ name = "fuzz-runner"
 version = "0.1.0"
 description = "Single-shot fault fuzz campaign runner for Cortex-M4 harnesses"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "harness-shared",
+    "python-dotenv>=1.0",
+]
+
+[tool.uv.sources]
+harness-shared = { path = "../../common/python/harness_shared", editable = true }

@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from harness_shared.support import qemu_mps2_an386_command, terminate_process
+
 
 @dataclass(frozen=True)
 class ProcessResult:
@@ -21,19 +23,7 @@ def qemu_command(
     plugin: Path,
     manifest: Path,
 ) -> list[str]:
-    return [
-        qemu,
-        "-M",
-        "mps2-an386",
-        "-cpu",
-        "cortex-m4",
-        "-kernel",
-        str(elf),
-        "-nographic",
-        "-monitor",
-        "none",
-        "-serial",
-        "none",
+    return qemu_mps2_an386_command(qemu, elf) + [
         "-plugin",
         f"file={plugin},manifest={manifest}",
     ]
@@ -61,7 +51,7 @@ def run_qemu_trial(
     try:
         while time.monotonic() < deadline:
             if done.exists():
-                terminate_qemu(proc)
+                terminate_process(proc)
                 return ProcessResult(
                     process_status="completed",
                     timeout=False,
@@ -77,7 +67,7 @@ def run_qemu_trial(
                 )
             time.sleep(0.02)
 
-        terminate_qemu(proc)
+        terminate_process(proc)
         warn_on_stderr(proc, "qemu timed out")
         return ProcessResult(
             process_status="timeout",
@@ -86,7 +76,7 @@ def run_qemu_trial(
         )
     finally:
         if proc.poll() is None:
-            terminate_qemu(proc)
+            terminate_process(proc)
 
 
 def warn_on_stderr(proc: subprocess.Popen[str], reason: str) -> None:
@@ -98,15 +88,6 @@ def warn_on_stderr(proc: subprocess.Popen[str], reason: str) -> None:
         return
     if stderr.strip():
         print(f"warning: {reason}; qemu stderr:\n{stderr.rstrip()}", file=sys.stderr)
-
-
-def terminate_qemu(proc: subprocess.Popen[str]) -> None:
-    proc.terminate()
-    try:
-        proc.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=2)
 
 
 def elapsed_since_ms(start: float) -> int:

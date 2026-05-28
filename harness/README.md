@@ -42,65 +42,56 @@ harness-campaign c tmr
 ```
 
 The helper takes `<language> <technique>` and always runs the `mixed` campaign
-for 10 iterations. Optional third and fourth arguments set the CSV output path
-and GDB port:
+for 10 iterations:
 
 ```sh
-harness-campaign c tmr /tmp/tmr-c.csv 12410
-harness-campaign zig checkpoint -- /tmp/checkpoint-zig.csv 12411
+harness-campaign c tmr
+harness-campaign zig checkpoint
 ```
 
 ```sh
 cd harness/e2e/injector
 uv run python main.py \
-  --launch-qemu \
   --technique tmr \
   --language c \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique tmr \
   --language zig \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique checkpoint \
   --language c \
   --campaign checkpoint-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique checkpoint \
   --language zig \
   --campaign checkpoint-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique recovery-block \
   --language c \
   --campaign recovery-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique recovery-block \
   --language zig \
   --campaign recovery-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique control-flow \
   --language c \
   --campaign control-mixed-faults \
   --iterations 20
 
 uv run python main.py \
-  --launch-qemu \
   --technique control-flow \
   --language zig \
   --campaign control-mixed-faults \
@@ -118,6 +109,9 @@ The `<elf>` path is inferred as
 `pygdbmi` to drive GDB/MI. GDB connects to QEMU's GDB Remote Serial Protocol
 endpoint, places breakpoints on the exported injection hooks, writes the
 fault-control globals, and records the result counters exposed by the firmware.
+The injector always launches `qemu-system-arm` and uses `gdb` on localhost.
+Defaults for iterations, GDB port, and timeouts live in
+`harness/e2e/injector/.env`; CLI `--iterations` overrides the `.env` value.
 
 ## Run A QEMU TCG Plugin Fuzz Campaign
 
@@ -139,7 +133,7 @@ harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> \
 ```
 
 It builds the fuzz harness firmware, uses the Nix-built `qemu-ft-fuzz.so`
-plugin, and writes CSV output under `results/qemu-ft-fuzz/`.
+plugin, and writes CSV output to stdout.
 `reg-bitflip-window` is the default campaign and flips a random bit in a
 general-purpose register while `harness_fault_window_open` is set.
 `ram-symbol-bitflip` chooses from exported `harness_fuzz_*` live-state symbols.
@@ -160,6 +154,11 @@ QEMU_FT_FUZZ_PLUGIN=/path/to/qemu-ft-fuzz.so \
     --campaign reg-bitflip-window \
     --trials 20
 ```
+
+Pass `--csv <path>` to write the CSV to a file instead of stdout.
+Defaults for trials, seed, timeout, and instruction budget live in
+`harness/fuzz/runner/.env`; CLI `--trials` and `--seed` override the `.env`
+values. Set `QEMU_FT_FUZZ_PLUGIN` in the shell or `.env`.
 
 ## Firmware ABI
 
