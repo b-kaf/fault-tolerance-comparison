@@ -17,10 +17,6 @@ static uint32_t sample_initial_value(uint64_t *rng) {
     return 100u + (harness_random_u32(rng) % 700u);
 }
 
-static uint32_t sample_updated_value(uint64_t *rng) {
-    return 100u + (harness_random_u32(rng) % 700u);
-}
-
 static checker_record_t sample_record(uint32_t value) {
     return checker_record_init(
         CHECKER_TAG_SAMPLE,
@@ -34,7 +30,7 @@ static checker_record_t sample_record(uint32_t value) {
 void harness_main(void) {
     uint64_t rng = harness_seed_state();
     const uint32_t initial = sample_initial_value(&rng);
-    const uint32_t expected = sample_updated_value(&rng);
+    const uint32_t expected = sample_initial_value(&rng);
     checkpoint_restart_result_t result;
 
     harness_expected = expected;

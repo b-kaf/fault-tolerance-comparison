@@ -1,6 +1,5 @@
 const control_flow = @import("control_flow");
 const fuzz = @import("fuzz_abi.zig");
-const std = @import("std");
 
 export var harness_fuzz_control_phase: u32 = 0;
 export var harness_fuzz_control_signature: u32 = 0;
@@ -99,9 +98,4 @@ export fn harness_main() callconv(.c) noreturn {
     fuzz.complete();
 }
 
-pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, ra: ?usize) noreturn {
-    _ = msg;
-    _ = trace;
-    _ = ra;
-    while (true) {}
-}
+pub const panic = fuzz.panic;

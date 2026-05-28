@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,6 @@ class ProcessResult:
     process_status: str
     timeout: bool
     elapsed_ms: int
-    stderr: str = ""
 
 
 def qemu_command(
@@ -69,16 +69,16 @@ def run_qemu_trial(
                 )
             status = proc.poll()
             if status is not None:
-                stderr = proc.stderr.read() if proc.stderr else ""
+                warn_on_stderr(proc, f"qemu exited with status {status}")
                 return ProcessResult(
                     process_status=f"exit:{status}",
                     timeout=False,
                     elapsed_ms=elapsed_since_ms(start),
-                    stderr=stderr,
                 )
             time.sleep(0.02)
 
         terminate_qemu(proc)
+        warn_on_stderr(proc, "qemu timed out")
         return ProcessResult(
             process_status="timeout",
             timeout=True,
@@ -87,6 +87,17 @@ def run_qemu_trial(
     finally:
         if proc.poll() is None:
             terminate_qemu(proc)
+
+
+def warn_on_stderr(proc: subprocess.Popen[str], reason: str) -> None:
+    if proc.stderr is None:
+        return
+    try:
+        stderr = proc.stderr.read()
+    except ValueError:
+        return
+    if stderr.strip():
+        print(f"warning: {reason}; qemu stderr:\n{stderr.rstrip()}", file=sys.stderr)
 
 
 def terminate_qemu(proc: subprocess.Popen[str]) -> None:

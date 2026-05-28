@@ -79,11 +79,16 @@ def selected_fuzz_symbols(symbols: dict[str, Symbol]) -> list[Symbol]:
 
 def text_range(symbols: dict[str, Symbol]) -> tuple[int, int]:
     start = symbols.get("_start") or symbols.get("Reset_Handler")
-    end = symbols.get("__exidx_start") or symbols.get("__exidx_end")
     if start is None:
-        return 0, 0
-    if end is not None:
-        return start.address, end.address
+        raise ValueError("ELF is missing _start / Reset_Handler — cannot bound .text")
+
+    # __etext / _etext mark the true end of .text. __exidx_start marks the
+    # start of .ARM.exidx, which immediately follows .text on ARM. Do NOT use
+    # __exidx_end — that's the end of .ARM.exidx, well past .text.
+    for name in ("__etext", "_etext", "__exidx_start"):
+        end = symbols.get(name)
+        if end is not None:
+            return start.address, end.address
 
     text_symbols = [
         symbol
@@ -91,6 +96,6 @@ def text_range(symbols: dict[str, Symbol]) -> tuple[int, int]:
         if symbol.kind in {"T", "t"} and symbol.address >= start.address
     ]
     if not text_symbols:
-        return start.address, start.address + 0x1000
+        raise ValueError("no .text symbols found; cannot bound .text range")
     max_end = max(symbol.address + max(symbol.size, 2) for symbol in text_symbols)
     return start.address, max_end

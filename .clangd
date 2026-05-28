@@ -1,14 +1,20 @@
 If:
-  PathMatch: harness/c/.*\.c
+  PathMatch: harness/(fuzz|e2e)/c/.*\.c
 CompileFlags:
   Add:
     - -xc
     - -std=c11
-    - -I../common
-    - -I../../c/tmr
-    - -I../../c/checkpoint
-    - -I../../c/checker
     - -ffreestanding
+    - -fno-builtin
+    - -Wall
+    - -Wextra
+    - -Iharness/common
+    - -Iharness/fuzz/c
+    - -Ic/checker
+    - -Ic/checkpoint
+    - -Ic/control_flow
+    - -Ic/recovery_block
+    - -Ic/tmr
 ---
 If:
   PathMatch: c/.*\.c
@@ -23,3 +29,10 @@ CompileFlags:
   Add:
     - -xc-header
     - -std=c11
+    - -Iharness/common
+    - -Iharness/fuzz/c
+    - -Ic/checker
+    - -Ic/checkpoint
+    - -Ic/control_flow
+    - -Ic/recovery_block
+    - -Ic/tmr

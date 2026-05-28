@@ -238,7 +238,7 @@ pub fn build(b: *std.Build) void {
         harness_step,
     );
 
-    addCortexM4CHarness(
+    addCortexM4CFuzzHarness(
         b,
         "tmr-fuzz-harness-c-m4",
         "harness/fuzz/c/tmr_fuzz_harness.c",
@@ -248,7 +248,7 @@ pub fn build(b: *std.Build) void {
         optimize,
         fuzz_harness_step,
     );
-    addCortexM4CHarness(
+    addCortexM4CFuzzHarness(
         b,
         "checkpoint-fuzz-harness-c-m4",
         "harness/fuzz/c/checkpoint_fuzz_harness.c",
@@ -258,7 +258,7 @@ pub fn build(b: *std.Build) void {
         optimize,
         fuzz_harness_step,
     );
-    addCortexM4CHarness(
+    addCortexM4CFuzzHarness(
         b,
         "recovery-block-fuzz-harness-c-m4",
         "harness/fuzz/c/recovery_block_fuzz_harness.c",
@@ -268,7 +268,7 @@ pub fn build(b: *std.Build) void {
         optimize,
         fuzz_harness_step,
     );
-    addCortexM4CHarness(
+    addCortexM4CFuzzHarness(
         b,
         "control-flow-fuzz-harness-c-m4",
         "harness/fuzz/c/control_flow_fuzz_harness.c",
@@ -394,6 +394,32 @@ fn addCortexM4CHarness(
         .file = b.path(source_path),
         .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-ffreestanding", "-fno-builtin" },
     });
+    const exe = b.addExecutable(.{ .name = name, .root_module = mod });
+    exe.entry = .{ .symbol_name = "Reset_Handler" };
+    exe.link_gc_sections = true;
+    exe.setLinkerScript(b.path("harness/common/mps2_an386.ld"));
+    installHarness(b, exe, install_sub_path, harness_step);
+}
+
+fn addCortexM4CFuzzHarness(
+    b: *std.Build,
+    name: []const u8,
+    source_path: []const u8,
+    include_paths: []const []const u8,
+    install_sub_path: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    harness_step: *std.Build.Step,
+) void {
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+    });
+    for (include_paths) |inc| mod.addIncludePath(b.path(inc));
+    mod.addAssemblyFile(b.path("harness/common/startup_mps2_an386.s"));
+    const c_flags = &.{ "-std=c11", "-Wall", "-Wextra", "-ffreestanding", "-fno-builtin" };
+    mod.addCSourceFile(.{ .file = b.path(source_path), .flags = c_flags });
+    mod.addCSourceFile(.{ .file = b.path("harness/fuzz/c/fuzz_common.c"), .flags = c_flags });
     const exe = b.addExecutable(.{ .name = name, .root_module = mod });
     exe.entry = .{ .symbol_name = "Reset_Handler" };
     exe.link_gc_sections = true;

@@ -1,5 +1,4 @@
 const fuzz = @import("fuzz_abi.zig");
-const std = @import("std");
 const tmr = @import("tmr");
 
 const TmrU32 = tmr.Tmr(u32);
@@ -60,9 +59,4 @@ export fn harness_main() callconv(.c) noreturn {
     fuzz.complete();
 }
 
-pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, ra: ?usize) noreturn {
-    _ = msg;
-    _ = trace;
-    _ = ra;
-    while (true) {}
-}
+pub const panic = fuzz.panic;

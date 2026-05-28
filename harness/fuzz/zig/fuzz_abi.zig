@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub export var harness_trial_seed: u64 = 0;
 pub export var harness_done: u32 = 0;
 pub export var harness_detected: u32 = 0;
@@ -50,4 +52,11 @@ pub fn complete() noreturn {
     while (true) {
         asm volatile ("nop");
     }
+}
+
+pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, ra: ?usize) noreturn {
+    _ = msg;
+    _ = trace;
+    _ = ra;
+    while (true) {}
 }
