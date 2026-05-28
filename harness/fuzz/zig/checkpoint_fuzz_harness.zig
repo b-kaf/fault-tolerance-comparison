@@ -50,11 +50,11 @@ export fn harness_main() callconv(.c) noreturn {
     state.active.refreshChecksum();
     mirror.mirrorCheckpointed(ptrs, &state);
 
-    fuzz.openFaultWindow();
     state = mirror.loadCheckpointed(ptrs);
+    fuzz.openFaultWindow();
     const result = state.commitOrRestart();
-    mirror.mirrorCheckpointed(ptrs, &state);
     fuzz.closeFaultWindow();
+    mirror.mirrorCheckpointed(ptrs, &state);
 
     fuzz.store32(&fuzz.harness_output, state.active.value);
     fuzz.store32(&fuzz.harness_error_code, result.status.code());

@@ -36,9 +36,13 @@ export fn harness_main() callconv(.c) noreturn {
     fuzz.store32(&fuzz.harness_expected, expected);
     mirrorState(&state);
 
-    fuzz.openFaultWindow();
     state = loadState();
-    if (state.read()) |value| {
+    fuzz.openFaultWindow();
+    const read_result = state.read();
+    fuzz.closeFaultWindow();
+    mirrorState(&state);
+
+    if (read_result) |value| {
         fuzz.store32(&fuzz.harness_output, value);
         if (state.fault_count != 0) {
             fuzz.store32(&fuzz.harness_detected, 1);
@@ -53,8 +57,6 @@ export fn harness_main() callconv(.c) noreturn {
             fuzz.store32(&fuzz.harness_error_code, 1);
         },
     }
-    mirrorState(&state);
-    fuzz.closeFaultWindow();
 
     fuzz.complete();
 }
