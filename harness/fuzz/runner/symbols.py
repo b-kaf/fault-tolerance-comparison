@@ -55,14 +55,16 @@ def load_symbols(elf: Path, llvm_nm: str) -> dict[str, Symbol]:
             continue
         existing = symbols.get(name)
         if existing is None or (existing.kind.islower() and kind.isupper()):
-            symbols[name] = Symbol(name=name, address=address, size=size, kind=kind)
+            symbols[name] = Symbol(
+                name=name, address=address, size=size, kind=kind)
     return symbols
 
 
 def require_trial_abi(symbols: dict[str, Symbol]) -> None:
     missing = [name for name in TRIAL_ABI_SYMBOLS if name not in symbols]
     if missing:
-        raise ValueError(f"ELF is missing required single-shot ABI symbol(s): {', '.join(missing)}")
+        raise ValueError(
+            f"ELF is missing required single-shot ABI symbol(s): {', '.join(missing)}")
 
 
 def selected_abi_symbols(symbols: dict[str, Symbol]) -> list[Symbol]:
@@ -80,11 +82,11 @@ def selected_fuzz_symbols(symbols: dict[str, Symbol]) -> list[Symbol]:
 def text_range(symbols: dict[str, Symbol]) -> tuple[int, int]:
     start = symbols.get("_start") or symbols.get("Reset_Handler")
     if start is None:
-        raise ValueError("ELF is missing _start / Reset_Handler — cannot bound .text")
+        raise ValueError(
+            "ELF is missing _start / Reset_Handler — cannot bound .text")
 
     # __etext / _etext mark the true end of .text. __exidx_start marks the
-    # start of .ARM.exidx, which immediately follows .text on ARM. Do NOT use
-    # __exidx_end — that's the end of .ARM.exidx, well past .text.
+    # start of .ARM.exidx, which immediately follows .text on ARM.
     for name in ("__etext", "_etext", "__exidx_start"):
         end = symbols.get(name)
         if end is not None:
@@ -97,5 +99,6 @@ def text_range(symbols: dict[str, Symbol]) -> tuple[int, int]:
     ]
     if not text_symbols:
         raise ValueError("no .text symbols found; cannot bound .text range")
-    max_end = max(symbol.address + max(symbol.size, 2) for symbol in text_symbols)
+    max_end = max(symbol.address + max(symbol.size, 2)
+                  for symbol in text_symbols)
     return start.address, max_end
