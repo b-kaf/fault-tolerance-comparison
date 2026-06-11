@@ -80,9 +80,15 @@ func (p *Process) Exited() bool {
 	}
 }
 
-// ExitCode is only meaningful after the process exited.
+// ExitCode is only meaningful after the process exited. Signal deaths
+// report as the negated signal number, matching Python's Popen.returncode
+// (the process_status strings in historical CSVs follow that convention).
 func (p *Process) ExitCode() int {
-	return p.cmd.ProcessState.ExitCode()
+	state := p.cmd.ProcessState
+	if ws, ok := state.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return -int(ws.Signal())
+	}
+	return state.ExitCode()
 }
 
 // Stderr returns everything the child wrote to stderr so far.

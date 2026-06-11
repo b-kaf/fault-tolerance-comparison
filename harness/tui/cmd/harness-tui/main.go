@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/fuzz"
 )
 
 var techniques = map[string]bool{
@@ -64,8 +66,16 @@ func run() int {
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Fprintf(os.Stderr, "harness-tui: fuzz engine not implemented yet (phase 3); config resolved: %+v\n", cfg)
-		return 2
+		summary, err := fuzz.Run(context.Background(), cfg, os.Stderr, fuzz.Events{})
+		if err != nil {
+			return fail(err)
+		}
+		if cfg.CSV == "" {
+			fmt.Fprintf(os.Stderr, "summary: %s\n", summary)
+		} else {
+			fmt.Printf("wrote %s (%s)\n", cfg.CSV, summary)
+		}
+		return 0
 	default:
 		return fail(fmt.Errorf("--headless requires --mode e2e or --mode fuzz"))
 	}
