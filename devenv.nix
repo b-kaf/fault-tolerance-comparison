@@ -26,6 +26,7 @@ in
   languages.nix.enable = true;
   languages.zig.enable = true;
   languages.c.enable = true;
+  languages.go.enable = true;
 
   # https://devenv.sh/processes/
   # processes.dev.exec = "${lib.getExe pkgs.watchexec} -n -- ls -la";
@@ -83,6 +84,12 @@ in
         --campaign "$campaign" \
         --seed "$seed" \
         --trials "''${ITERATIONS:-$trials}"
+  '';
+  scripts.harness-tui.exec = ''
+    set -eu
+
+    QEMU_FT_FUZZ_PLUGIN="${qemuFtFuzzPlugin}/lib/qemu-ft-fuzz.so" \
+      go run -C harness/tui ./cmd/harness-tui "''${@}"
   '';
   scripts.harness-asm.exec = ''
     set -eu

@@ -1,0 +1,40 @@
+{
+  "e2e_tmr": [
+    {"technique": "tmr", "implementation": "zig", "campaign": "mixed", "iteration": 1, "stage": 3, "fault_target": 0, "fault_value": 0, "expected": 305419896, "status": 0, "value": 305419896, "passes": 1, "failures": 0},
+    {"technique": "tmr", "implementation": "zig", "campaign": "mixed", "iteration": 2, "stage": 3, "fault_target": 1, "fault_value": 4294967295, "expected": 2596069104, "status": 0, "value": 2596069104, "passes": 2, "failures": 0},
+    {"technique": "tmr", "implementation": "zig", "campaign": "mixed", "iteration": 3, "stage": 3, "fault_target": 2, "fault_value": 324508639, "expected": 19088743, "status": 1, "value": 19088743, "passes": 2, "failures": 1},
+    {"technique": "tmr", "implementation": "zig", "campaign": "mixed", "iteration": 4, "stage": 3, "fault_target": 0, "fault_value": 0, "expected": 305419896, "status": 99, "value": 305419896, "passes": 2, "failures": 1}
+  ],
+  "e2e_checkpoint": [
+    {"technique": "checkpoint", "implementation": "c", "campaign": "checkpoint-mixed-faults", "iteration": 1, "stage": 7, "fault_target": 0, "fault_value": 0, "initial_value": 100, "expected": 110, "status": 0, "restart_status": 0, "active_check": 0, "checkpoint_check": 0, "value": 110, "active_value": 110, "checkpoint_value": 110, "passes": 1, "failures": 0},
+    {"technique": "checkpoint", "implementation": "c", "campaign": "checkpoint-mixed-faults", "iteration": 2, "stage": 7, "fault_target": 10, "fault_value": 4294967295, "initial_value": 110, "expected": 120, "status": 0, "restart_status": 1, "active_check": 2, "checkpoint_check": 0, "value": 120, "active_value": 120, "checkpoint_value": 120, "passes": 2, "failures": 0},
+    {"technique": "checkpoint", "implementation": "c", "campaign": "checkpoint-mixed-faults", "iteration": 3, "stage": 7, "fault_target": 15, "fault_value": 4294967295, "initial_value": 120, "expected": 130, "status": 0, "restart_status": 2, "active_check": 2, "checkpoint_check": 4, "value": 120, "active_value": 4294967295, "checkpoint_value": 120, "passes": 2, "failures": 1}
+  ],
+  "e2e_recovery_block": [
+    {"technique": "recovery-block", "implementation": "zig", "campaign": "recovery-mixed-faults", "iteration": 1, "stage": 11, "fault_target": 0, "fault_value": 0, "initial_value": 100, "expected": 110, "status": 0, "recovery_status": 0, "checkpoint_check": 0, "primary_check": 0, "restore_check": 0, "alternate_check": 0, "value": 110, "active_value": 110, "checkpoint_value": 100, "passes": 1, "failures": 0},
+    {"technique": "recovery-block", "implementation": "zig", "campaign": "recovery-mixed-faults", "iteration": 2, "stage": 11, "fault_target": 20, "fault_value": 4294967295, "initial_value": 110, "expected": 120, "status": 1, "recovery_status": 1, "checkpoint_check": 0, "primary_check": 2, "restore_check": 0, "alternate_check": 0, "value": 120, "active_value": 120, "checkpoint_value": 110, "passes": 2, "failures": 0},
+    {"technique": "recovery-block", "implementation": "zig", "campaign": "recovery-mixed-faults", "iteration": 3, "stage": 11, "fault_target": 23, "fault_value": 4294967295, "initial_value": 120, "expected": 130, "status": 4, "recovery_status": 4, "checkpoint_check": 4, "primary_check": 2, "restore_check": 4, "alternate_check": 0, "value": 120, "active_value": 4294967295, "checkpoint_value": 120, "passes": 2, "failures": 1}
+  ],
+  "e2e_control_flow": [
+    {"technique": "control-flow", "implementation": "c", "campaign": "control-mixed-faults", "iteration": 1, "stage": 15, "fault_target": 0, "fault_value": 0, "expected": 42, "status": 0, "control_status": 0, "terminal_status": 0, "phase": 5, "signature": 305419896, "transitions": 5, "value": 42, "passes": 1, "failures": 0},
+    {"technique": "control-flow", "implementation": "c", "campaign": "control-mixed-faults", "iteration": 2, "stage": 15, "fault_target": 30, "fault_value": 4, "expected": 42, "status": 1, "control_status": 1, "terminal_status": 0, "phase": 4, "signature": 16, "transitions": 3, "value": 0, "passes": 1, "failures": 1},
+    {"technique": "control-flow", "implementation": "c", "campaign": "control-mixed-faults", "iteration": 3, "stage": 15, "fault_target": 31, "fault_value": 16, "expected": 42, "status": 2, "control_status": 2, "terminal_status": 3, "phase": 4, "signature": 16, "transitions": 4, "value": 0, "passes": 1, "failures": 2}
+  ],
+  "fuzz": [
+    {
+      "technique": "tmr", "implementation": "zig", "trial_id": 0, "trial_seed": 1311768467463790320, "campaign": "reg-bitflip", "campaign_seed": 3235823822, "result_class": "corrected",
+      "facts": {"harness_done": "1", "harness_detected": "1", "harness_corrected": "1", "harness_safe_state": "0", "harness_output": "0x12345678", "harness_expected": "0x12345678", "harness_error_code": "0", "injected": "1", "fault_mode": "reg-bitflip", "fault_domain": "register", "target_kind": "register", "target_name": "r3", "inject_pc": "0x1f4", "inject_offset": "1234", "bit": "17", "before": "0x0", "after": "0x20000", "instructions_executed": "56789", "qemu_plugin_api": "2"},
+      "process_status": "completed", "timeout": false, "elapsed_ms": 143
+    },
+    {
+      "technique": "tmr", "implementation": "zig", "trial_id": 1, "trial_seed": 81985529216486895, "campaign": "reg-bitflip", "campaign_seed": 3235823822, "result_class": "hang",
+      "facts": {"unknown_extra_fact": "should-be-dropped", "instruction_budget_exhausted": "1"},
+      "process_status": "timeout", "timeout": true, "elapsed_ms": 5002
+    },
+    {
+      "technique": "checkpoint", "implementation": "c", "trial_id": 2, "trial_seed": 11400714819323198485, "campaign": "none", "campaign_seed": 0, "result_class": "passed",
+      "facts": {"harness_done": "1", "harness_detected": "0", "harness_corrected": "0", "harness_safe_state": "0", "harness_output": "0x6e", "harness_expected": "0x6e", "harness_error_code": "0", "injected": "0"},
+      "process_status": "completed", "timeout": false, "elapsed_ms": 87
+    }
+  ]
+}

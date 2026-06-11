@@ -1,0 +1,4 @@
+technique,implementation,campaign,iteration,result,pass_delta,failure_delta,stage,stage_name,fault_target,fault_name,fault_value,initial_value,expected,value,restart_status,restart_status_name,active_check,active_check_name,checkpoint_check,checkpoint_check_name,active_value,checkpoint_value,passes,failures
+checkpoint,c,checkpoint-mixed-faults,1,pass,1,0,7,after_commit,0,none,0,100,110,110,0,committed,0,ok,0,ok,110,110,1,0
+checkpoint,c,checkpoint-mixed-faults,2,pass,1,0,7,after_commit,10,active_value,4294967295,110,120,120,1,restored,2,above_max,0,ok,120,120,2,0
+checkpoint,c,checkpoint-mixed-faults,3,fail,0,1,7,after_commit,15,active_value_and_checkpoint_checksum,4294967295,120,130,120,2,restore_failed,2,above_max,4,invalid_checksum,4294967295,120,2,1
