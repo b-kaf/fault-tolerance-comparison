@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/result"
 )
@@ -157,6 +158,88 @@ func TestResizePreservesPageAndCursor(t *testing.T) {
 	}
 	if got := m.results.table.Cursor(); got != wantCursor {
 		t.Errorf("after resize cursor = %d, want %d (resize reset the selected row)", got, wantCursor)
+	}
+}
+
+// The results table must shrink to fit a short terminal rather than always
+// rendering tableHeight rows and overflowing the screen (finding #4); on a
+// tall terminal it stays at the full default height.
+func TestTableHeightFitsTerminal(t *testing.T) {
+	tall := newModel("/repo")
+	tall.width, tall.height = 100, 60
+	if got := tall.resultsTableHeight(); got != tableHeight {
+		t.Errorf("tall terminal table height = %d, want %d", got, tableHeight)
+	}
+
+	short := newModel("/repo")
+	short.width, short.height = 100, 30
+	got := short.resultsTableHeight()
+	if got >= tableHeight {
+		t.Errorf("short terminal table height = %d, want it shrunk below %d", got, tableHeight)
+	}
+	if got < minTableHeight {
+		t.Errorf("table height = %d, want floored at >= %d", got, minTableHeight)
+	}
+
+	// The rendered view must fit within the terminal height on a short screen.
+	short.mode = modeFuzz
+	short.fuzzRows = sampleFuzzRows()
+	short.buildResultsTable()
+	if h := lipgloss.Height(short.View()); h > short.height {
+		t.Errorf("view height %d exceeds terminal height %d on a short terminal", h, short.height)
+	}
+
+	// A very short terminal floors the table rather than going to zero/negative.
+	tiny := newModel("/repo")
+	tiny.width, tiny.height = 100, 5
+	if got := tiny.resultsTableHeight(); got != minTableHeight {
+		t.Errorf("tiny terminal table height = %d, want floor %d", got, minTableHeight)
+	}
+}
+
+// When the results table goes away while focus is on it, focus must be pulled
+// back to a reachable widget rather than left stranded past the last focus stop
+// (finding #5). This covers both the clearResults path (Clear / start-of-run)
+// and the buildResultsTable path (a rebuild that finds no rows).
+func TestClearResultsPullsFocusFromResultsPane(t *testing.T) {
+	m := newModel("/repo")
+	m.width, m.height = 80, 40
+	m.e2eRows = sampleE2ERows()
+	m.buildResultsTable()
+	m.focus = m.resultsIndex()
+	if !m.onResults() {
+		t.Fatal("setup: expected focus on results")
+	}
+
+	m.clearResults()
+	if m.hasTable {
+		t.Fatal("clearResults should drop the table")
+	}
+	if m.onResults() || m.focus >= m.focusStops() {
+		t.Errorf("focus %d not pulled back after clear (stops=%d)", m.focus, m.focusStops())
+	}
+}
+
+func TestBuildResultsTableStrandsNoFocus(t *testing.T) {
+	m := newModel("/repo")
+	m.width, m.height = 80, 40
+	m.mode = modeFuzz
+	m.fuzzRows = sampleFuzzRows()
+	m.buildResultsTable()
+	m.focus = m.resultsIndex()
+	if !m.onResults() {
+		t.Fatal("setup: expected focus on results")
+	}
+
+	// Rebuild with the rows gone (e.g. a finish/resize that finds nothing):
+	// the table disappears and focus must not be left out of range.
+	m.fuzzRows = nil
+	m.buildResultsTable()
+	if m.hasTable {
+		t.Fatal("expected no table after rows cleared")
+	}
+	if m.onResults() || m.focus >= m.focusStops() {
+		t.Errorf("focus %d stranded out of range after table removed (stops=%d)", m.focus, m.focusStops())
 	}
 }
 

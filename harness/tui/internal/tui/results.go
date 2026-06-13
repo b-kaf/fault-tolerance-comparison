@@ -22,8 +22,19 @@ type resultsTable struct {
 }
 
 const (
-	maxColWidth   = 18
-	tableHeight   = 10
+	maxColWidth = 18
+	// tableHeight is the default/maximum number of rows the results table
+	// shows; resultsTableHeight shrinks it to fit a short terminal.
+	tableHeight = 10
+	// minTableHeight is the floor so a short terminal still shows a few rows
+	// rather than collapsing the table to nothing.
+	minTableHeight = 3
+	// resultsChrome is the vertical space the rest of the UI occupies around
+	// the table (title, the mode/config/actions panes and their borders,
+	// inter-pane spacing, the results pane border+header, and the help line).
+	// Measured at ~24-25 lines; we reserve a little more to absorb the status
+	// area growing during a run.
+	resultsChrome = 27
 	colCellMargin = 2 // bubbles/table cell padding
 )
 
@@ -120,9 +131,9 @@ func (rt *resultsTable) rebuild() {
 		rows[r] = cells
 	}
 
-	h := tableHeight
-	if rt.height > 0 && rt.height < h {
-		h = rt.height
+	h := rt.height
+	if h <= 0 {
+		h = tableHeight
 	}
 	rt.table = table.New(
 		table.WithColumns(cols),
@@ -131,14 +142,15 @@ func (rt *resultsTable) rebuild() {
 	)
 }
 
-// reflow re-paginates the columns for a new available width while preserving
-// the current page (clamped to the new page count by rebuild) and the selected
-// row. The data is unchanged on a resize; only the width-dependent column
-// grouping is recomputed. Focus is left to the caller — rebuild starts the new
-// table blurred.
-func (rt *resultsTable) reflow(width int) {
+// reflow re-paginates the columns for a new available width and height while
+// preserving the current page (clamped to the new page count by rebuild) and
+// the selected row. The data is unchanged on a resize; only the size-dependent
+// column grouping and row count are recomputed. Focus is left to the caller —
+// rebuild starts the new table blurred.
+func (rt *resultsTable) reflow(width, height int) {
 	cursor := rt.table.Cursor()
 	rt.width = width
+	rt.height = height
 	rt.pages = paginateColumns(rt.columns, rt.records, width)
 	rt.rebuild()
 	rt.table.SetCursor(cursor)

@@ -236,10 +236,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.progress.Width = min(msg.Width-8, 60)
 		}
 		if m.hasTable {
-			// Re-paginate columns for the new width, keeping the user's page
-			// and selected row; the rebuilt table starts blurred, so re-apply
-			// focus if the results pane is the active widget.
-			m.results.reflow(m.tableWidth())
+			// Re-flow columns and rows for the new size, keeping the user's
+			// page and selected row; the rebuilt table starts blurred, so
+			// re-apply focus if the results pane is the active widget.
+			m.results.reflow(m.tableWidth(), m.resultsTableHeight())
 			if m.onResults() {
 				m.results.focus()
 			}
@@ -585,8 +585,8 @@ func (m model) startE2E() (tea.Model, tea.Cmd) {
 	m.cancel = cancel
 	m.events = ch
 	m.state = stateRunning
-	m.e2eRows = nil
-	m.progressCur, m.progressTot = 0, cfg.Iterations
+	m.clearResults() // drop the previous run's table (and any focus on it)
+	m.progressTot = cfg.Iterations
 	m.setStatus("running…", statusInfo)
 
 	go func() {
@@ -630,9 +630,9 @@ func (m model) startFuzz() (tea.Model, tea.Cmd) {
 	m.cancel = cancel
 	m.events = ch
 	m.state = stateRunning
-	m.fuzzRows = nil
+	m.clearResults() // drop the previous run's table (and any focus on it)
 	m.histogram = map[string]int{}
-	m.progressCur, m.progressTot = 0, cfg.Trials
+	m.progressTot = cfg.Trials
 	m.setStatus("running…", statusInfo)
 
 	go func() {
@@ -677,24 +677,39 @@ func (m *model) tableWidth() int {
 	return m.width
 }
 
+// resultsTableHeight is how many rows the results table should show: the
+// default tableHeight, shrunk to fit a short terminal (reserving room for the
+// other panes) and floored so it never collapses. Before the first
+// WindowSizeMsg (m.height == 0) it uses the default.
+func (m *model) resultsTableHeight() int {
+	if m.height <= 0 {
+		return tableHeight
+	}
+	h := m.height - resultsChrome
+	return max(min(h, tableHeight), minTableHeight)
+}
+
 // buildResultsTable rebuilds the results table from the in-memory rows for the
 // active mode, resetting the column page and selected row. Called on run finish
 // (including cancellation, so partial rows show). Window resize uses
 // results.reflow instead, to preserve the user's page and row.
 func (m *model) buildResultsTable() {
 	width := m.tableWidth()
+	height := m.resultsTableHeight()
 	if m.mode == modeFuzz {
 		if len(m.fuzzRows) == 0 {
 			m.hasTable = false
+			m.dropTableFocus()
 			return
 		}
-		m.results = fuzzResults(m.fuzzRows, width, tableHeight)
+		m.results = fuzzResults(m.fuzzRows, width, height)
 	} else {
 		if len(m.e2eRows) == 0 {
 			m.hasTable = false
+			m.dropTableFocus()
 			return
 		}
-		m.results = e2eResults(m.e2eRows, width, tableHeight)
+		m.results = e2eResults(m.e2eRows, width, height)
 	}
 	m.hasTable = true
 	if m.onResults() {
@@ -710,6 +725,14 @@ func (m *model) clearResults() {
 	m.histogram = nil
 	m.progressCur, m.progressTot = 0, 0
 	m.hasTable = false
+	m.dropTableFocus()
+}
+
+// dropTableFocus pulls focus back to the action bar when the results pane has
+// just gone away; otherwise focus would point past the last focus stop, leaving
+// no widget active and the key handler inert. Called everywhere hasTable is set
+// false so the focus invariant holds.
+func (m *model) dropTableFocus() {
 	if m.focus >= m.focusStops() {
 		m.focus = m.actionBarIndex()
 	}
