@@ -11,6 +11,9 @@ devenv.local.yaml
 __pycache__/
 *.py[cod]
 
+# Go
+harness/tui/harness-tui
+
 # pre-commit
 .pre-commit-config.yaml
 
