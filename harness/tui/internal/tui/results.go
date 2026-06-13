@@ -17,7 +17,6 @@ type resultsTable struct {
 	pages     [][]int    // column indices per page
 	page      int
 	table     table.Model
-	width     int
 	height    int
 }
 
@@ -60,7 +59,6 @@ func newResultsTable(columns []string, records [][]string, width, height int) re
 		columns:   columns,
 		records:   records,
 		colWidths: computeColWidths(columns, records),
-		width:     width,
 		height:    height,
 	}
 	rt.pages = paginateColumns(rt.colWidths, width)
@@ -156,7 +154,6 @@ func (rt *resultsTable) rebuild() {
 // rebuild starts the new table blurred.
 func (rt *resultsTable) reflow(width, height int) {
 	cursor := rt.table.Cursor()
-	rt.width = width
 	rt.height = height
 	rt.pages = paginateColumns(rt.colWidths, width)
 	rt.rebuild()
@@ -166,24 +163,21 @@ func (rt *resultsTable) reflow(width, height int) {
 func (rt *resultsTable) focus() { rt.table.Focus() }
 func (rt *resultsTable) blur()  { rt.table.Blur() }
 
-func (rt *resultsTable) nextPage() {
-	if len(rt.pages) > 1 {
-		cursor := rt.table.Cursor()
-		rt.page = (rt.page + 1) % len(rt.pages)
-		rt.rebuild()
-		rt.table.SetCursor(cursor) // keep the same row selected across pages
-		rt.table.Focus()
-	}
-}
+func (rt *resultsTable) nextPage() { rt.cyclePage(1) }
+func (rt *resultsTable) prevPage() { rt.cyclePage(-1) }
 
-func (rt *resultsTable) prevPage() {
-	if len(rt.pages) > 1 {
-		cursor := rt.table.Cursor()
-		rt.page = (rt.page - 1 + len(rt.pages)) % len(rt.pages)
-		rt.rebuild()
-		rt.table.SetCursor(cursor)
-		rt.table.Focus()
+// cyclePage moves the active column page by delta, wrapping around, and keeps
+// the same row selected across pages.
+func (rt *resultsTable) cyclePage(delta int) {
+	n := len(rt.pages)
+	if n <= 1 {
+		return
 	}
+	cursor := rt.table.Cursor()
+	rt.page = (rt.page + delta + n) % n
+	rt.rebuild()
+	rt.table.SetCursor(cursor)
+	rt.table.Focus()
 }
 
 func (rt *resultsTable) update(msg tea.Msg) tea.Cmd {

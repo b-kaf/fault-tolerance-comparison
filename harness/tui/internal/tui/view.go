@@ -36,16 +36,11 @@ func (m model) focusHint() focusHint {
 }
 
 func (m model) modePane() string {
-	e2eLabel := "  E2E Injector  "
-	fuzzLabel := "  Fuzz Runner  "
+	e2eStyle, fuzzStyle := buttonStyle, buttonFocusedStyle
 	if m.mode == modeE2E {
-		e2eLabel = buttonFocusedStyle.Render("E2E Injector")
-		fuzzLabel = buttonStyle.Render("Fuzz Runner")
-	} else {
-		e2eLabel = buttonStyle.Render("E2E Injector")
-		fuzzLabel = buttonFocusedStyle.Render("Fuzz Runner")
+		e2eStyle, fuzzStyle = buttonFocusedStyle, buttonStyle
 	}
-	content := e2eLabel + "  " + fuzzLabel
+	content := e2eStyle.Render("E2E Injector") + "  " + fuzzStyle.Render("Fuzz Runner")
 	if m.onMode() {
 		content += "   " + mutedStyle.Render("←→ switch")
 	}
@@ -137,10 +132,8 @@ func (m model) statusLine() string {
 		parts = append(parts, status)
 	}
 
-	if m.mode == modeFuzz {
-		if hist := sortedHistogram(m.histogram); hist != "" {
-			parts = append(parts, mutedStyle.Render(hist))
-		}
+	if m.mode == modeFuzz && m.histogramStr != "" {
+		parts = append(parts, mutedStyle.Render(m.histogramStr))
 	}
 
 	if m.state == stateBuilding && len(m.buildTail) > 0 {

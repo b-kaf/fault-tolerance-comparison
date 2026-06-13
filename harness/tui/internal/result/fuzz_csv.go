@@ -104,11 +104,7 @@ func OpenFuzzCSV(path string) (*FuzzWriter, error) {
 // WriteRow projects the row onto the fixed schema; unknown keys are dropped,
 // matching DictWriter(extrasaction="ignore").
 func (w *FuzzWriter) WriteRow(row map[string]string) error {
-	record := make([]string, len(FuzzCSVFields))
-	for i, field := range FuzzCSVFields {
-		record[i] = row[field]
-	}
-	return w.csv.WriteRow(record)
+	return w.csv.WriteRow(FuzzRecord(row, FuzzCSVFields))
 }
 
 func (w *FuzzWriter) Close() error { return w.csv.Close() }

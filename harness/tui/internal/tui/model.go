@@ -111,6 +111,9 @@ type model struct {
 	progressCur int
 	progressTot int
 	histogram   map[string]int // fuzz result-class counts during a run
+	// histogramStr caches the rendered histogram so View doesn't re-sort and
+	// re-format it on every spinner frame; recomputed only when histogram changes.
+	histogramStr string
 
 	// results held for export and shown in the table
 	e2eRows  []result.Row
@@ -260,6 +263,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.histogram = map[string]int{}
 			}
 			m.histogram[msg.resultClass]++
+			m.histogramStr = sortedHistogram(m.histogram)
 		}
 		return m, m.listen()
 
@@ -734,6 +738,7 @@ func (m *model) clearResults() {
 	m.e2eRows = nil
 	m.fuzzRows = nil
 	m.histogram = nil
+	m.histogramStr = ""
 	m.progressCur, m.progressTot = 0, 0
 	m.hasTable = false
 	m.dropTableFocus()
@@ -788,32 +793,29 @@ func (m model) handleBuildFinished(msg buildFinishedMsg) model {
 	return m
 }
 
+// exportResults writes the in-memory rows back to the active mode's configured
+// CSV path.
 func (m model) exportResults() (tea.Model, tea.Cmd) {
-	// The results table arrives in phase 6; for now Export writes the
-	// in-memory rows back to the configured CSV path.
+	var count int
+	var path string
+	var write func() error
 	if m.mode == modeE2E {
-		if len(m.e2eRows) == 0 {
-			m.setStatus("no results to export", statusWarn)
-			return m, nil
-		}
-		path := m.e2eFields[fE2ECSV].value()
-		if err := result.WriteE2ECSV(path, m.e2eRows); err != nil {
-			m.setStatus("export failed: "+err.Error(), statusError)
-			return m, nil
-		}
-		m.setStatus(fmt.Sprintf("exported %d rows to %s", len(m.e2eRows), path), statusOK)
-		return m, nil
+		count, path = len(m.e2eRows), m.e2eFields[fE2ECSV].value()
+		write = func() error { return result.WriteE2ECSV(path, m.e2eRows) }
+	} else {
+		count, path = len(m.fuzzRows), m.fuzzFields[fzCSV].value()
+		write = func() error { return writeFuzzRows(path, m.fuzzRows) }
 	}
-	if len(m.fuzzRows) == 0 {
+
+	if count == 0 {
 		m.setStatus("no results to export", statusWarn)
 		return m, nil
 	}
-	path := m.fuzzFields[fzCSV].value()
-	if err := writeFuzzRows(path, m.fuzzRows); err != nil {
+	if err := write(); err != nil {
 		m.setStatus("export failed: "+err.Error(), statusError)
 		return m, nil
 	}
-	m.setStatus(fmt.Sprintf("exported %d rows to %s", len(m.fuzzRows), path), statusOK)
+	m.setStatus(fmt.Sprintf("exported %d rows to %s", count, path), statusOK)
 	return m, nil
 }
 

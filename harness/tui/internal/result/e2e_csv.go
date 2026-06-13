@@ -3,6 +3,7 @@ package result
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 )
 
@@ -148,12 +149,10 @@ func cleanE2ERows(rows []Row) []Row {
 
 func selectedE2EFields(rows []Row) []string {
 	if len(rows) == 0 {
-		return append(append([]string{}, e2eBaseFields...), e2eCounterFields...)
+		return slices.Concat(e2eBaseFields, e2eCounterFields)
 	}
 	technique, _ := rows[0]["technique"].(string)
-	fields := append([]string{}, e2eBaseFields...)
-	fields = append(fields, e2eTechniqueFields[technique]...)
-	fields = append(fields, e2eCounterFields...)
+	fields := slices.Concat(e2eBaseFields, e2eTechniqueFields[technique], e2eCounterFields)
 
 	selected := fields[:0]
 	for _, field := range fields {
