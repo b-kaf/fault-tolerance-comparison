@@ -236,7 +236,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.progress.Width = min(msg.Width-8, 60)
 		}
 		if m.hasTable {
-			m.buildResultsTable() // re-paginate columns for the new width
+			// Re-paginate columns for the new width, keeping the user's page
+			// and selected row; the rebuilt table starts blurred, so re-apply
+			// focus if the results pane is the active widget.
+			m.results.reflow(m.tableWidth())
+			if m.onResults() {
+				m.results.focus()
+			}
 		}
 		return m, nil
 
@@ -650,21 +656,33 @@ func (m model) handleFinished(msg engineFinishedMsg) model {
 		m.setStatus("stopped — partial results kept", statusWarn)
 	case msg.err != nil:
 		m.setStatus("error: "+msg.err.Error(), statusError)
-	default:
+	case msg.success:
 		m.setStatus("done — "+msg.summary, statusOK)
+	default:
+		// Completed without a run error, but the outcome itself is not a
+		// clean pass (e.g. an e2e campaign whose final failure counter is
+		// non-zero). Mirror the headless non-zero exit by flagging it.
+		m.setStatus("completed with failures — "+msg.summary, statusWarn)
 	}
 	m.buildResultsTable()
 	return m
 }
 
-// buildResultsTable rebuilds the results table from the in-memory rows for the
-// active mode. Called on run finish (including cancellation, so partial rows
-// show) and on window resize.
-func (m *model) buildResultsTable() {
-	width := m.width
-	if width <= 0 {
-		width = 80
+// tableWidth is the width used to lay out the results table, with a fallback
+// for before the first WindowSizeMsg has arrived.
+func (m *model) tableWidth() int {
+	if m.width <= 0 {
+		return 80
 	}
+	return m.width
+}
+
+// buildResultsTable rebuilds the results table from the in-memory rows for the
+// active mode, resetting the column page and selected row. Called on run finish
+// (including cancellation, so partial rows show). Window resize uses
+// results.reflow instead, to preserve the user's page and row.
+func (m *model) buildResultsTable() {
+	width := m.tableWidth()
 	if m.mode == modeFuzz {
 		if len(m.fuzzRows) == 0 {
 			m.hasTable = false

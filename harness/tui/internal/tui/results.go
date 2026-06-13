@@ -131,6 +131,19 @@ func (rt *resultsTable) rebuild() {
 	)
 }
 
+// reflow re-paginates the columns for a new available width while preserving
+// the current page (clamped to the new page count by rebuild) and the selected
+// row. The data is unchanged on a resize; only the width-dependent column
+// grouping is recomputed. Focus is left to the caller — rebuild starts the new
+// table blurred.
+func (rt *resultsTable) reflow(width int) {
+	cursor := rt.table.Cursor()
+	rt.width = width
+	rt.pages = paginateColumns(rt.columns, rt.records, width)
+	rt.rebuild()
+	rt.table.SetCursor(cursor)
+}
+
 func (rt *resultsTable) focus() { rt.table.Focus() }
 func (rt *resultsTable) blur()  { rt.table.Blur() }
 

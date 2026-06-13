@@ -144,6 +144,24 @@ func TestEngineProgressAndFinished(t *testing.T) {
 	}
 }
 
+// A run that completes without an error but reports failures (success=false)
+// must not be shown as a green "done" (finding #2): the outcome is flagged as
+// a warning so a failing-but-completed e2e campaign is visually distinct.
+func TestFinishedWithFailuresWarns(t *testing.T) {
+	m := newModel("/repo")
+	m.state = stateRunning
+	m = update(t, m, engineFinishedMsg{summary: "passes=18 failures=2 (20 iterations)", success: false})
+	if m.state != stateIdle {
+		t.Errorf("state = %v, want idle after finish", m.state)
+	}
+	if m.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want warn for a completed run with failures", m.statusKind)
+	}
+	if !strings.Contains(m.status, "failures") {
+		t.Errorf("status = %q, want it to mention failures", m.status)
+	}
+}
+
 func TestFinishedCancellationKeepsPartial(t *testing.T) {
 	m := newModel("/repo")
 	m.state = stateRunning

@@ -124,6 +124,42 @@ func TestResultsAppearAndPageAfterFinish(t *testing.T) {
 	}
 }
 
+// A terminal resize re-paginates columns for the new width but must keep the
+// user's current column page and selected row (finding #3), rather than
+// snapping back to page 0 / row 0.
+func TestResizePreservesPageAndCursor(t *testing.T) {
+	m := newModel("/repo")
+	m.width, m.height = 80, 40
+	m.mode = modeFuzz
+	m.fuzzRows = sampleFuzzRows()
+	m.buildResultsTable()
+	if !m.hasTable {
+		t.Fatal("setup: expected a table")
+	}
+	if len(m.results.pages) < 2 {
+		t.Fatalf("setup: expected multiple column pages, got %d", len(m.results.pages))
+	}
+
+	// Page off the first column page and select a non-first row.
+	m.results.nextPage()
+	m.results.table.SetCursor(1)
+	wantPage := m.results.page
+	wantCursor := m.results.table.Cursor()
+	if wantPage == 0 {
+		t.Fatal("setup: expected to be off the first column page")
+	}
+
+	// Resizing (here to a narrower width, which yields at least as many pages)
+	// must keep the user's place.
+	m = update(t, m, tea.WindowSizeMsg{Width: 60, Height: 40})
+	if m.results.page != wantPage {
+		t.Errorf("after resize page = %d, want %d (resize reset the column page)", m.results.page, wantPage)
+	}
+	if got := m.results.table.Cursor(); got != wantCursor {
+		t.Errorf("after resize cursor = %d, want %d (resize reset the selected row)", got, wantCursor)
+	}
+}
+
 func TestModeSwitchClearsTable(t *testing.T) {
 	m := newModel("/repo")
 	m.width = 80
