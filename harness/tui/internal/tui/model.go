@@ -2,10 +2,11 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -368,6 +369,7 @@ func (m model) handleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Switching mode discards in-memory results (PLAN §4).
 		m.clearResults()
 		m.focus = 0
+		m.actionCursor = actStart // don't leave the cursor on a now-disabled action
 		m.regenerateCSV()
 		m.setStatus("", statusInfo)
 	}
@@ -499,18 +501,20 @@ func (m *model) regenerateCSV() {
 	if m.csvEdited() {
 		return
 	}
-	idx := fE2ECSV
+	// Use each layout's own field constants rather than assuming the two
+	// layouts share positions 0/1/2 — reordering either must not silently pick
+	// the wrong field.
 	fields := m.e2eFields
+	techIdx, langIdx, campIdx, csvIdx := fTechnique, fLanguage, fCampaign, fE2ECSV
 	if m.mode == modeFuzz {
-		idx = fzCSV
 		fields = m.fuzzFields
+		techIdx, langIdx, campIdx, csvIdx = fzTechnique, fzLanguage, fzCampaign, fzCSV
 	}
-	// Technique/Language/Campaign occupy positions 0/1/2 in both layouts.
 	name := autoCSVName(m.mode.String(),
-		fields[fTechnique].value(),
-		fields[fLanguage].value(),
-		fields[fCampaign].value())
-	fields[idx].input.SetValue(name)
+		fields[techIdx].value(),
+		fields[langIdx].value(),
+		fields[campIdx].value())
+	fields[csvIdx].input.SetValue(name)
 }
 
 func autoCSVName(mode, technique, language, campaign string) string {
@@ -652,8 +656,15 @@ func (m model) handleFinished(msg engineFinishedMsg) model {
 	m.cancel = nil
 	m.events = nil
 	switch {
-	case msg.err != nil && isCancel(msg.err):
-		m.setStatus("stopped — partial results kept", statusWarn)
+	case isCancel(msg.err):
+		// A deliberate Stop. A bare context.Canceled means the partial results
+		// were saved; a wrapped one carries a detail to surface (e.g. the save
+		// failed) — still a stop, not a hard error.
+		if msg.err == context.Canceled {
+			m.setStatus("stopped — partial results kept", statusWarn)
+		} else {
+			m.setStatus("stopped — "+msg.err.Error(), statusWarn)
+		}
 	case msg.err != nil:
 		m.setStatus("error: "+msg.err.Error(), statusError)
 	case msg.success:
@@ -839,15 +850,14 @@ func envDefaultInt(name string, def int64) int64 {
 }
 
 func envDefaultString(name, def string) string {
-	v, err := config.EnvU64(name, 0)
-	if err != nil || v == 0 {
-		return def
+	if v := os.Getenv(name); v != "" {
+		return v
 	}
-	return fmt.Sprintf("0x%X", v)
+	return def
 }
 
 func isCancel(err error) bool {
-	return err == context.Canceled || strings.Contains(err.Error(), "context canceled")
+	return errors.Is(err, context.Canceled)
 }
 
 func appendTail(lines []string, line string, max int) []string {
@@ -858,18 +868,9 @@ func appendTail(lines []string, line string, max int) []string {
 	return lines
 }
 
+// sortedHistogram renders the live result-class counts during a fuzz run,
+// reusing the engine's formatter so the in-progress and final summaries can't
+// drift.
 func sortedHistogram(counts map[string]int) string {
-	if len(counts) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(counts))
-	for name := range counts {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	parts := make([]string, len(names))
-	for i, name := range names {
-		parts[i] = fmt.Sprintf("%s=%d", name, counts[name])
-	}
-	return strings.Join(parts, " ")
+	return fuzz.FormatCounts(counts, " ")
 }

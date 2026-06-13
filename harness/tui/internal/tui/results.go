@@ -11,14 +11,14 @@ import (
 // horizontal scroll and both the 31-column fuzz schema and the wide e2e
 // techniques exceed a terminal's width (PLAN §4).
 type resultsTable struct {
-	columns []string   // full ordered column set
-	records [][]string // full data, all columns
-	pages   [][]int    // column indices per page
-	page    int
-	table   table.Model
-	width   int
-	height  int
-	ready   bool
+	columns   []string   // full ordered column set
+	records   [][]string // full data, all columns
+	colWidths []int      // rendered width per column, computed once at build
+	pages     [][]int    // column indices per page
+	page      int
+	table     table.Model
+	width     int
+	height    int
 }
 
 const (
@@ -57,38 +57,45 @@ func fuzzResults(rows []map[string]string, width, height int) resultsTable {
 
 func newResultsTable(columns []string, records [][]string, width, height int) resultsTable {
 	rt := resultsTable{
-		columns: columns,
-		records: records,
-		width:   width,
-		height:  height,
-		ready:   len(records) > 0,
+		columns:   columns,
+		records:   records,
+		colWidths: computeColWidths(columns, records),
+		width:     width,
+		height:    height,
 	}
-	rt.pages = paginateColumns(columns, records, width)
+	rt.pages = paginateColumns(rt.colWidths, width)
 	rt.rebuild()
 	return rt
 }
 
-// colWidth is the rendered width of a column: the widest of header/cells,
-// capped.
-func colWidth(columns []string, records [][]string, col int) int {
-	w := len(columns[col])
-	for _, record := range records {
-		if col < len(record) && len(record[col]) > w {
-			w = len(record[col])
+// computeColWidths returns the rendered width of each column — the widest of
+// header/cells, capped at maxColWidth. The data never changes after build, so
+// this is computed once and reused by pagination and rebuild rather than
+// re-scanning every cell on each resize.
+func computeColWidths(columns []string, records [][]string) []int {
+	widths := make([]int, len(columns))
+	for col := range columns {
+		w := len(columns[col])
+		for _, record := range records {
+			if col < len(record) && len(record[col]) > w {
+				w = len(record[col])
+			}
 		}
+		widths[col] = min(w, maxColWidth)
 	}
-	return min(w, maxColWidth)
+	return widths
 }
 
-// paginateColumns groups columns into pages that fit the available width.
-// Each page holds at least one column so a very narrow terminal still works.
-func paginateColumns(columns []string, records [][]string, width int) [][]int {
+// paginateColumns groups columns into pages that fit the available width, using
+// the precomputed per-column widths. Each page holds at least one column so a
+// very narrow terminal still works.
+func paginateColumns(colWidths []int, width int) [][]int {
 	avail := max(width-4, 10) // pane border + padding
 	var pages [][]int
 	var current []int
 	used := 0
-	for col := range columns {
-		w := colWidth(columns, records, col) + colCellMargin
+	for col, cw := range colWidths {
+		w := cw + colCellMargin
 		if len(current) > 0 && used+w > avail {
 			pages = append(pages, current)
 			current = nil
@@ -118,7 +125,7 @@ func (rt *resultsTable) rebuild() {
 
 	cols := make([]table.Column, len(indices))
 	for i, col := range indices {
-		cols[i] = table.Column{Title: rt.columns[col], Width: colWidth(rt.columns, rt.records, col)}
+		cols[i] = table.Column{Title: rt.columns[col], Width: rt.colWidths[col]}
 	}
 	rows := make([]table.Row, len(rt.records))
 	for r, record := range rt.records {
@@ -151,7 +158,7 @@ func (rt *resultsTable) reflow(width, height int) {
 	cursor := rt.table.Cursor()
 	rt.width = width
 	rt.height = height
-	rt.pages = paginateColumns(rt.columns, rt.records, width)
+	rt.pages = paginateColumns(rt.colWidths, width)
 	rt.rebuild()
 	rt.table.SetCursor(cursor)
 }

@@ -22,6 +22,12 @@ var (
 	Languages  = []string{"c", "zig"}
 )
 
+// maxRunCount caps iterations/trials. These campaigns are slow (one QEMU run
+// each), so any realistic count is far below this; the bound exists so an
+// accidental huge value (typed in the TUI or passed on the CLI) is rejected
+// cleanly instead of making the engine pre-allocate an absurd slice and panic.
+const maxRunCount = 1_000_000
+
 func validEnum(list []string, value string) bool {
 	return slices.Contains(list, value)
 }
@@ -61,6 +67,9 @@ func ResolveE2E(repoRoot, technique, language, campaign string, iterations int, 
 	}
 	if iterations <= 0 {
 		return cfg, fmt.Errorf("iterations must be positive")
+	}
+	if iterations > maxRunCount {
+		return cfg, fmt.Errorf("iterations must be <= %d", maxRunCount)
 	}
 
 	port, err := config.EnvInt("HARNESS_E2E_GDB_PORT", 1234)
@@ -124,6 +133,9 @@ func ResolveFuzz(repoRoot, technique, language, campaign string, trials int, see
 	}
 	if trials <= 0 {
 		return cfg, fmt.Errorf("trials must be positive")
+	}
+	if trials > maxRunCount {
+		return cfg, fmt.Errorf("trials must be <= %d", maxRunCount)
 	}
 
 	var seed uint64

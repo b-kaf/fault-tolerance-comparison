@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -247,6 +249,71 @@ func TestEditingE2ECSVDoesNotFreezeFuzzCSV(t *testing.T) {
 	csv := m.fuzzFields[fzCSV].value()
 	if !strings.HasPrefix(csv, "results/fuzz-") || !strings.HasSuffix(csv, ".csv") {
 		t.Errorf("fuzz CSV = %q, want auto-named results/fuzz-*.csv after editing the e2e path", csv)
+	}
+}
+
+// isCancel must recognize a (possibly wrapped) context.Canceled and must NOT
+// be fooled by an unrelated error whose text merely contains the phrase
+// (finding #7).
+func TestIsCancelUsesErrorsIs(t *testing.T) {
+	if !isCancel(context.Canceled) {
+		t.Error("bare context.Canceled should be a cancel")
+	}
+	wrapped := fmt.Errorf("could not save partial results: disk full (%w)", context.Canceled)
+	if !isCancel(wrapped) {
+		t.Error("wrapped context.Canceled should be a cancel")
+	}
+	if isCancel(errors.New("gdb log line mentioning context canceled")) {
+		t.Error("an unrelated error that merely mentions the phrase must not be a cancel")
+	}
+	if isCancel(nil) {
+		t.Error("nil is not a cancel")
+	}
+}
+
+// A Stop whose partial-save failed is wrapped around context.Canceled, so it is
+// still classified as a stop (warn), with the save failure surfaced (finding #8).
+func TestFinishedWrappedCancelIsStopWithDetail(t *testing.T) {
+	m := newModel("/repo")
+	m.state = stateRunning
+	wrapped := fmt.Errorf("could not save partial results: boom (%w)", context.Canceled)
+	m = update(t, m, engineFinishedMsg{err: wrapped})
+	if m.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want warn (a stop, not a hard error)", m.statusKind)
+	}
+	if !strings.Contains(m.status, "could not save partial results") {
+		t.Errorf("status = %q, want it to surface the save failure", m.status)
+	}
+}
+
+// Switching mode must reset the action cursor so it can't be left on an action
+// that is disabled in the new state (finding #10).
+func TestModeSwitchResetsActionCursor(t *testing.T) {
+	m := newModel("/repo")
+	m.actionCursor = actStop // disabled while idle
+	m.focus = 0
+	m = update(t, m, keyType(tea.KeyRight))
+	if m.mode != modeFuzz {
+		t.Fatalf("mode = %v, want fuzz", m.mode)
+	}
+	if m.actionCursor != actStart {
+		t.Errorf("actionCursor = %v after mode switch, want actStart", m.actionCursor)
+	}
+}
+
+// envDefaultString returns the raw env value (honoring a literal 0) and the
+// default when unset, rather than round-tripping through a u64 parse (finding #9).
+func TestEnvDefaultStringRawValue(t *testing.T) {
+	if got := envDefaultString("HARNESS_TUI_TEST_UNSET_VAR", "0xC0DEC0DE"); got != "0xC0DEC0DE" {
+		t.Errorf("unset = %q, want the default", got)
+	}
+	t.Setenv("HARNESS_TUI_TEST_SEED", "0")
+	if got := envDefaultString("HARNESS_TUI_TEST_SEED", "0xC0DEC0DE"); got != "0" {
+		t.Errorf("seed=0 = %q, want \"0\" (a real 0 must not be replaced by the default)", got)
+	}
+	t.Setenv("HARNESS_TUI_TEST_SEED", "42")
+	if got := envDefaultString("HARNESS_TUI_TEST_SEED", "0xC0DEC0DE"); got != "42" {
+		t.Errorf("raw = %q, want \"42\" (value must not be reformatted)", got)
 	}
 }
 

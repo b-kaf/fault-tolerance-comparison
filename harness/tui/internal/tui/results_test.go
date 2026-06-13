@@ -36,7 +36,7 @@ func TestPaginateColumnsFitsWidth(t *testing.T) {
 	columns := result.FuzzCuratedColumns
 	records := [][]string{result.FuzzRecord(sampleFuzzRows()[0], columns)}
 
-	pages := paginateColumns(columns, records, 80)
+	pages := paginateColumns(computeColWidths(columns, records), 80)
 	if len(pages) < 2 {
 		t.Fatalf("31 columns at width 80 should span >1 page, got %d", len(pages))
 	}

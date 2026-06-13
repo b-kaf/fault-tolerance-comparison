@@ -76,7 +76,10 @@ func Run(ctx context.Context, cfg config.E2E, events Events) (Summary, error) {
 				// Cancellation: persist what we have, mirror PLAN §5.
 				summary = finalize(rows)
 				if writeErr := result.WriteE2ECSV(cfg.CSV, rows); writeErr != nil {
-					return summary, writeErr
+					// Still a deliberate stop; wrap ctx.Err() so the caller
+					// classifies it as a stop (errors.Is == context.Canceled)
+					// while surfacing that the partial results were not saved.
+					return summary, fmt.Errorf("could not save partial results: %v (%w)", writeErr, ctx.Err())
 				}
 				return summary, ctx.Err()
 			}

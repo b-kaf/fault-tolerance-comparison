@@ -32,16 +32,26 @@ func (s Summary) String() string {
 	if len(s.Counts) == 0 {
 		return "no trials"
 	}
-	names := make([]string, 0, len(s.Counts))
-	for name := range s.Counts {
+	return FormatCounts(s.Counts, ", ")
+}
+
+// FormatCounts renders result-class counts as sorted "name=count" pairs joined
+// by sep. Empty counts yield "". Shared by the final summary and the TUI's
+// live histogram so their formatting cannot drift.
+func FormatCounts(counts map[string]int, sep string) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(counts))
+	for name := range counts {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	parts := make([]string, len(names))
 	for i, name := range names {
-		parts[i] = fmt.Sprintf("%s=%d", name, s.Counts[name])
+		parts[i] = fmt.Sprintf("%s=%d", name, counts[name])
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, sep)
 }
 
 // Run mirrors main.run: load symbols, then drive one QEMU trial per seed,

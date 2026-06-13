@@ -3,8 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 func (m model) View() string {
@@ -202,6 +200,3 @@ func (m model) resultsPane() string {
 	}
 	return style.Render(header + "\n" + m.results.table.View())
 }
-
-// ensure lipgloss is referenced even if helpers above are trimmed during edits
-var _ = lipgloss.Width

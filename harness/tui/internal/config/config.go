@@ -70,13 +70,16 @@ func ParseU64(s string) (uint64, error) {
 	return v, nil
 }
 
-// ParsePositiveInt mirrors support.positive_int.
+// ParsePositiveInt parses a plain decimal count (iterations/trials) and
+// requires it to be positive. It uses Atoi rather than base-0 ParseInt so a
+// field labelled "integer" does not silently treat "010" as octal or accept
+// hex, and so an out-of-int-range value errors instead of truncating.
 func ParsePositiveInt(s string) (int, error) {
-	v, err := strconv.ParseInt(s, 0, 64)
+	v, err := strconv.Atoi(s)
 	if err != nil || v <= 0 {
 		return 0, fmt.Errorf("value must be positive: %q", s)
 	}
-	return int(v), nil
+	return v, nil
 }
 
 // EnvInt reads an integer env var with base-0 semantics, returning def when
