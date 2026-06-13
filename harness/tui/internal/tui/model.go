@@ -107,9 +107,11 @@ type model struct {
 	progressTot int
 	histogram   map[string]int // fuzz result-class counts during a run
 
-	// results held for export (phase 6 surfaces these in a table)
+	// results held for export and shown in the table
 	e2eRows  []result.Row
 	fuzzRows []map[string]string
+	results  resultsTable
+	hasTable bool
 
 	status     string
 	statusKind statusKind
@@ -195,9 +197,24 @@ func (m *model) fieldCount() int { return len(m.fields()) }
 // actionBarIndex is the focus value that selects the action bar.
 func (m *model) actionBarIndex() int { return m.fieldCount() + 1 }
 
+// resultsIndex is the focus value that selects the results table; only
+// reachable when hasTable.
+func (m *model) resultsIndex() int { return m.fieldCount() + 2 }
+
+// focusStops is the number of focusable widgets: mode + fields + actions,
+// plus the results table once there is one.
+func (m *model) focusStops() int {
+	stops := m.actionBarIndex() + 1
+	if m.hasTable {
+		stops++
+	}
+	return stops
+}
+
 func (m *model) onMode() bool    { return m.focus == 0 }
 func (m *model) onActions() bool { return m.focus == m.actionBarIndex() }
 func (m *model) onField() bool   { return m.focus >= 1 && m.focus <= m.fieldCount() }
+func (m *model) onResults() bool { return m.hasTable && m.focus == m.resultsIndex() }
 
 // focusedField returns a pointer to the focused field, or nil.
 func (m *model) focusedField() *field {
@@ -213,6 +230,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		if msg.Width > 8 {
 			m.progress.Width = min(msg.Width-8, 60)
+		}
+		if m.hasTable {
+			m.buildResultsTable() // re-paginate columns for the new width
 		}
 		return m, nil
 
@@ -273,12 +293,25 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "tab", "down":
+	case "tab":
 		m.moveFocus(1)
 		return m, m.focusCmd()
 
-	case "shift+tab", "up":
+	case "shift+tab":
 		m.moveFocus(-1)
+		return m, m.focusCmd()
+
+	case "up", "down":
+		// On the results table up/down scroll rows; elsewhere they move focus.
+		if m.onResults() {
+			cmd := m.results.update(msg)
+			return m, cmd
+		}
+		if msg.String() == "up" {
+			m.moveFocus(-1)
+		} else {
+			m.moveFocus(1)
+		}
 		return m, m.focusCmd()
 	}
 
@@ -287,8 +320,25 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleModeKey(msg)
 	case m.onActions():
 		return m.handleActionKey(msg)
+	case m.onResults():
+		return m.handleResultsKey(msg)
 	case m.onField():
 		return m.handleFieldKey(msg)
+	}
+	return m, nil
+}
+
+func (m model) handleResultsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "left":
+		m.results.prevPage()
+		return m, nil
+	case "right":
+		m.results.nextPage()
+		return m, nil
+	case "pgup", "pgdown", "home", "end":
+		cmd := m.results.update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -306,10 +356,8 @@ func (m model) handleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeE2E
 		}
 		// Switching mode discards in-memory results (PLAN §4).
-		m.e2eRows = nil
-		m.fuzzRows = nil
-		m.histogram = nil
-		m.progressCur, m.progressTot = 0, 0
+		m.clearResults()
+		m.focus = 0
 		m.regenerateCSV()
 		m.setStatus("", statusInfo)
 	}
@@ -385,10 +433,7 @@ func (m model) activate(a action) (tea.Model, tea.Cmd) {
 	case actExport:
 		return m.exportResults()
 	case actClear:
-		m.e2eRows = nil
-		m.fuzzRows = nil
-		m.histogram = nil
-		m.progressCur, m.progressTot = 0, 0
+		m.clearResults()
 		m.setStatus("cleared results", statusInfo)
 		return m, nil
 	case actQuit:
@@ -399,11 +444,17 @@ func (m model) activate(a action) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) moveFocus(delta int) {
-	total := m.actionBarIndex() + 1 // mode + fields + actions
+	total := m.focusStops()
 	if f := m.focusedField(); f != nil {
 		f.blur()
 	}
+	if m.onResults() {
+		m.results.blur()
+	}
 	m.focus = (m.focus + delta%total + total) % total
+	if m.onResults() {
+		m.results.focus()
+	}
 }
 
 // focusCmd focuses the newly-selected text field (if any) so it shows a cursor.
@@ -579,7 +630,48 @@ func (m model) handleFinished(msg engineFinishedMsg) model {
 	default:
 		m.setStatus("done — "+msg.summary, statusOK)
 	}
+	m.buildResultsTable()
 	return m
+}
+
+// buildResultsTable rebuilds the results table from the in-memory rows for the
+// active mode. Called on run finish (including cancellation, so partial rows
+// show) and on window resize.
+func (m *model) buildResultsTable() {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	if m.mode == modeFuzz {
+		if len(m.fuzzRows) == 0 {
+			m.hasTable = false
+			return
+		}
+		m.results = fuzzResults(m.fuzzRows, width, tableHeight)
+	} else {
+		if len(m.e2eRows) == 0 {
+			m.hasTable = false
+			return
+		}
+		m.results = e2eResults(m.e2eRows, width, tableHeight)
+	}
+	m.hasTable = true
+	if m.onResults() {
+		m.results.focus()
+	}
+}
+
+// clearResults drops the in-memory results and the table, and pulls focus back
+// if it was on the (now-gone) results pane.
+func (m *model) clearResults() {
+	m.e2eRows = nil
+	m.fuzzRows = nil
+	m.histogram = nil
+	m.progressCur, m.progressTot = 0, 0
+	m.hasTable = false
+	if m.focus >= m.focusStops() {
+		m.focus = m.actionBarIndex()
+	}
 }
 
 func (m model) startBuild() (tea.Model, tea.Cmd) {

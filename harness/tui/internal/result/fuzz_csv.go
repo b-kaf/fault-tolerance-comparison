@@ -43,6 +43,39 @@ var FuzzCSVFields = []string{
 	"qemu_plugin_api",
 }
 
+// FuzzCuratedColumns is FuzzCSVFields reordered so the most useful columns
+// come first (PLAN §4): the TUI shows these on the first column page, the rest
+// follow on later pages. Every schema column still appears across the pages.
+var FuzzCuratedColumns = curatedFuzzOrder()
+
+func curatedFuzzOrder() []string {
+	curated := []string{
+		"trial_id", "result_class", "technique", "implementation",
+		"fault_mode", "target_kind", "target_name", "bit",
+		"process_status", "timeout", "elapsed_ms",
+	}
+	seen := make(map[string]bool, len(curated))
+	for _, c := range curated {
+		seen[c] = true
+	}
+	ordered := append([]string{}, curated...)
+	for _, field := range FuzzCSVFields {
+		if !seen[field] {
+			ordered = append(ordered, field)
+		}
+	}
+	return ordered
+}
+
+// FuzzRecord projects a fuzz result row onto the given columns.
+func FuzzRecord(row map[string]string, columns []string) []string {
+	record := make([]string, len(columns))
+	for i, column := range columns {
+		record[i] = row[column]
+	}
+	return record
+}
+
 var fuzzFactKeyToColumn = map[string]string{
 	"harness_output":     "output",
 	"harness_expected":   "expected",

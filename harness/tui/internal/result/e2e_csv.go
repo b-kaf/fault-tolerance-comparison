@@ -99,6 +99,19 @@ func WriteE2ECSV(path string, rows []Row) error {
 	return nil
 }
 
+// E2ETable returns the same formatted data WriteE2ECSV would write, as an
+// in-memory (columns, records) pair for the TUI results table. Columns and
+// values match the CSV exactly so the on-screen table and the file agree.
+func E2ETable(rows []Row) (columns []string, records [][]string) {
+	clean := cleanE2ERows(rows)
+	columns = selectedE2EFields(clean)
+	records = make([][]string, len(clean))
+	for i, row := range clean {
+		records[i] = projectRow(row, columns)
+	}
+	return columns, records
+}
+
 func cleanE2ERows(rows []Row) []Row {
 	clean := make([]Row, 0, len(rows))
 	var previousPasses, previousFailures int64

@@ -22,8 +22,19 @@ func (m model) View() string {
 	b.WriteString("\n")
 	b.WriteString(m.resultsPane())
 	b.WriteString("\n\n")
-	b.WriteString(mutedStyle.Render(helpForFocus(m.onActions())))
+	b.WriteString(mutedStyle.Render(helpForFocus(m.focusHint())))
 	return b.String()
+}
+
+func (m model) focusHint() focusHint {
+	switch {
+	case m.onResults():
+		return hintResults
+	case m.onActions():
+		return hintActions
+	default:
+		return hintDefault
+	}
 }
 
 func (m model) modePane() string {
@@ -168,15 +179,28 @@ func (m model) fraction() float64 {
 }
 
 func (m model) resultsPane() string {
-	count := m.resultCount()
-	var body string
-	if count == 0 {
-		body = mutedStyle.Render("no results yet — run a campaign")
-	} else {
-		// The bubbles/table view lands in phase 6; for now report the count.
-		body = valueStyle.Render(fmt.Sprintf("%d rows collected (table view: phase 6)", count))
+	style := paneStyle
+	if m.onResults() {
+		style = paneFocusedStyle
 	}
-	return paneStyle.Render(paneTitle("Results") + "\n" + body)
+
+	if !m.hasTable {
+		return style.Render(paneTitle("Results") + "\n" +
+			mutedStyle.Render("no results yet — run a campaign"))
+	}
+
+	header := paneTitle("Results")
+	header += "  " + mutedStyle.Render(fmt.Sprintf("%d rows", m.resultCount()))
+	if pages := len(m.results.pages); pages > 1 {
+		cols := m.results.pages[m.results.page]
+		first, last := m.results.columns[cols[0]], m.results.columns[cols[len(cols)-1]]
+		header += "  " + mutedStyle.Render(fmt.Sprintf("cols %s…%s · page %d/%d",
+			first, last, m.results.page+1, pages))
+		if m.onResults() {
+			header += " " + mutedStyle.Render("(←→)")
+		}
+	}
+	return style.Render(header + "\n" + m.results.table.View())
 }
 
 // ensure lipgloss is referenced even if helpers above are trimmed during edits
