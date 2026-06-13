@@ -179,3 +179,22 @@ func CampaignChoices() []string {
 	choices = append(choices, controlFlowChoices...)
 	return choices
 }
+
+// CampaignsForTechnique returns the campaigns valid for a technique, used by
+// the TUI to reload the campaign select when the technique changes. "mixed"
+// and "none" apply to every technique (per the validation matrix); the
+// technique-specific named campaigns follow.
+func CampaignsForTechnique(technique string) []string {
+	base := []string{"mixed", "none"}
+	switch technique {
+	case "tmr":
+		return append(base, "single-a", "all-distinct")
+	case "checkpoint":
+		return append(base, checkpointSampleChoices...)
+	case "recovery-block":
+		return append(base, recoveryBlockChoices...)
+	case "control-flow":
+		return append(base, controlFlowChoices...)
+	}
+	return base
+}

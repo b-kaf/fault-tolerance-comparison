@@ -22,6 +22,8 @@ in
     qemuFtFuzzPlugin
   ];
 
+  env.QEMU_FT_FUZZ_PLUGIN = "${qemuFtFuzzPlugin}/lib/qemu-ft-fuzz.so";
+
   # https://devenv.sh/languages/
   languages.nix.enable = true;
   languages.zig.enable = true;
