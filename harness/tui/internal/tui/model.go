@@ -92,7 +92,11 @@ type model struct {
 
 	e2eFields  []field
 	fuzzFields []field
-	csvEdited  bool
+	// CSV-path edits are tracked per mode: hand-editing one mode's path must
+	// not freeze the other mode's auto-naming, which would leave it empty and
+	// silently route that run's CSV to stdout (corrupting the alt-screen TUI).
+	e2eCSVEdited  bool
+	fuzzCSVEdited bool
 
 	focus        int // 0 = mode toggle, 1..n = fields, n+1 = action bar
 	actionCursor action
@@ -381,7 +385,7 @@ func (m model) handleFieldKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		f.input, cmd = f.input.Update(msg)
 		if m.isCSVField() {
-			m.csvEdited = true
+			m.setCSVEdited()
 		}
 		return m, cmd
 	}
@@ -402,6 +406,25 @@ func (m *model) isCSVField() bool {
 		return m.focus-1 == fE2ECSV
 	}
 	return m.focus-1 == fzCSV
+}
+
+// csvEdited reports whether the active mode's CSV path has been hand-edited.
+// Each mode tracks this separately so editing one does not freeze the other's
+// auto-naming.
+func (m *model) csvEdited() bool {
+	if m.mode == modeFuzz {
+		return m.fuzzCSVEdited
+	}
+	return m.e2eCSVEdited
+}
+
+// setCSVEdited marks the active mode's CSV path as hand-edited.
+func (m *model) setCSVEdited() {
+	if m.mode == modeFuzz {
+		m.fuzzCSVEdited = true
+	} else {
+		m.e2eCSVEdited = true
+	}
 }
 
 func (m model) handleActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -467,7 +490,7 @@ func (m *model) focusCmd() tea.Cmd {
 
 // regenerateCSV recomputes the auto CSV path unless the user has edited it.
 func (m *model) regenerateCSV() {
-	if m.csvEdited {
+	if m.csvEdited() {
 		return
 	}
 	idx := fE2ECSV

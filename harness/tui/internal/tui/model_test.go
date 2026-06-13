@@ -188,7 +188,7 @@ func TestCSVEditStopsRegeneration(t *testing.T) {
 		}
 	}
 	m = update(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	if !m.csvEdited {
+	if !m.csvEdited() {
 		t.Fatal("typing in CSV field should set csvEdited")
 	}
 	// Changing a select must no longer overwrite the edited path.
@@ -196,6 +196,39 @@ func TestCSVEditStopsRegeneration(t *testing.T) {
 	m = update(t, m, keyType(tea.KeyRight))
 	if m.e2eFields[fE2ECSV].value() == original {
 		t.Error("CSV path unexpectedly reverted to auto-name after manual edit")
+	}
+}
+
+// Editing one mode's CSV path must not freeze the OTHER mode's auto-naming
+// (finding #1): csvEdited is tracked per mode, so switching to fuzz after
+// editing the e2e path still produces a fuzz CSV name rather than an empty
+// path (which would route the run's CSV to stdout and corrupt the TUI).
+func TestEditingE2ECSVDoesNotFreezeFuzzCSV(t *testing.T) {
+	m := newModel("/repo")
+	// Move focus to the e2e CSV field and type into it.
+	for !m.isCSVField() {
+		m = update(t, m, keyType(tea.KeyTab))
+		if m.onActions() {
+			t.Fatal("never reached CSV field")
+		}
+	}
+	m = update(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if !m.e2eCSVEdited {
+		t.Fatal("typing in the e2e CSV field should mark e2e (not fuzz) edited")
+	}
+	if m.fuzzCSVEdited {
+		t.Fatal("editing the e2e path must not mark the fuzz path edited")
+	}
+
+	// Switch to fuzz; its CSV path must be auto-named, not left empty.
+	m.focus = 0
+	m = update(t, m, keyType(tea.KeyRight))
+	if m.mode != modeFuzz {
+		t.Fatalf("expected fuzz mode after toggle, got %v", m.mode)
+	}
+	csv := m.fuzzFields[fzCSV].value()
+	if !strings.HasPrefix(csv, "results/fuzz-") || !strings.HasSuffix(csv, ".csv") {
+		t.Errorf("fuzz CSV = %q, want auto-named results/fuzz-*.csv after editing the e2e path", csv)
 	}
 }
 
