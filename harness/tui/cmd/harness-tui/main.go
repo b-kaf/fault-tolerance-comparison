@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/e2e"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/fuzz"
 )
 
@@ -59,8 +61,18 @@ func run() int {
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Fprintf(os.Stderr, "harness-tui: e2e engine not implemented yet (phase 4); config resolved: %+v\n", cfg)
-		return 2
+		summary, err := e2e.Run(context.Background(), cfg, e2e.Events{})
+		if err != nil {
+			return fail(err)
+		}
+		if cfg.CSV != "" {
+			fmt.Printf("wrote %s (%d iterations, passes=%d failures=%d)\n",
+				cfg.CSV, summary.Iterations, summary.Passes, summary.Failures)
+		}
+		if summary.Success() {
+			return 0
+		}
+		return 1
 	case "fuzz":
 		cfg, err := resolveFuzz(repoRoot, *technique, *language, *campaign, *trials, *seed, *csvPath)
 		if err != nil {
@@ -98,6 +110,12 @@ func resolveE2E(repoRoot, technique, language, campaign string, iterations int, 
 	}
 	if campaign == "" {
 		campaign = "mixed"
+	}
+	if !slices.Contains(e2e.CampaignChoices(), campaign) {
+		return cfg, fmt.Errorf("invalid --campaign %q for e2e", campaign)
+	}
+	if msg := e2e.ValidateTechniqueCampaign(technique, campaign); msg != "" {
+		return cfg, fmt.Errorf("%s", msg)
 	}
 	if iterations == 0 {
 		v, err := config.EnvInt("HARNESS_E2E_ITERATIONS", 20)
