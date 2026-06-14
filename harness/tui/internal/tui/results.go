@@ -22,19 +22,23 @@ type resultsTable struct {
 
 const (
 	maxColWidth = 18
-	// tableHeight is the default/maximum number of rows the results table
-	// shows; resultsTableHeight shrinks it to fit a short terminal.
+	// tableHeight is the fallback row count used before the first WindowSizeMsg
+	// arrives; once the terminal size is known the table fills the available
+	// vertical space (see resultsTableHeight).
 	tableHeight = 10
 	// minTableHeight is the floor so a short terminal still shows a few rows
 	// rather than collapsing the table to nothing.
 	minTableHeight = 3
-	// resultsChrome is the vertical space the rest of the UI occupies around
-	// the table (title, the mode/config/actions panes and their borders,
-	// inter-pane spacing, the results pane border+header, and the help line).
-	// Measured at ~24-25 lines; we reserve a little more to absorb the status
-	// area growing during a run.
-	resultsChrome = 27
-	colCellMargin = 2 // bubbles/table cell padding
+	// resultsFixedChrome is the vertical space around the table that does not
+	// depend on the other panes' contents: the title line + the blank line
+	// under it (2), the results pane's border (2) and header line (1), and the
+	// help line (1). The variable panes — the top row and the actions bar — are
+	// measured directly in resultsTableHeight.
+	resultsFixedChrome = 6
+	// minConfigWidth floors the Configuration pane's width so it stays legible
+	// on a narrow terminal (see topPanes); below this the labels would clip.
+	minConfigWidth = 28
+	colCellMargin  = 2 // bubbles/table cell padding
 )
 
 // e2eResults builds a results table from collected e2e rows.

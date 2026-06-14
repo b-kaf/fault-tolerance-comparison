@@ -321,7 +321,9 @@ func TestViewRendersPanes(t *testing.T) {
 	m := newModel("/repo")
 	m.width, m.height = 100, 40
 	view := m.View()
-	for _, want := range []string{"Harness Runner", "Mode", "Configuration", "Technique", "Actions", "Start", "Results"} {
+	// The actions bar dropped its "Actions" title to stay thin; the "Start"
+	// button still proves it renders.
+	for _, want := range []string{"Harness Runner", "Mode", "Configuration", "Technique", "Start", "Results"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q", want)
 		}

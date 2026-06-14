@@ -161,32 +161,34 @@ func TestResizePreservesPageAndCursor(t *testing.T) {
 	}
 }
 
-// The results table must shrink to fit a short terminal rather than always
-// rendering tableHeight rows and overflowing the screen (finding #4); on a
-// tall terminal it stays at the full default height.
+// The results table fills the vertical space the other panes leave: it grows
+// with a taller terminal, shrinks on a short one, never overflows the screen,
+// and floors at minTableHeight so it can't collapse.
 func TestTableHeightFitsTerminal(t *testing.T) {
 	tall := newModel("/repo")
 	tall.width, tall.height = 100, 60
-	if got := tall.resultsTableHeight(); got != tableHeight {
-		t.Errorf("tall terminal table height = %d, want %d", got, tableHeight)
-	}
-
 	short := newModel("/repo")
 	short.width, short.height = 100, 30
-	got := short.resultsTableHeight()
-	if got >= tableHeight {
-		t.Errorf("short terminal table height = %d, want it shrunk below %d", got, tableHeight)
+
+	tallH := tall.resultsTableHeight()
+	shortH := short.resultsTableHeight()
+
+	// A taller terminal yields strictly more rows (the table grabs the slack).
+	if tallH <= shortH {
+		t.Errorf("tall terminal height %d should exceed short terminal height %d", tallH, shortH)
 	}
-	if got < minTableHeight {
-		t.Errorf("table height = %d, want floored at >= %d", got, minTableHeight)
+	if shortH < minTableHeight {
+		t.Errorf("table height = %d, want floored at >= %d", shortH, minTableHeight)
 	}
 
-	// The rendered view must fit within the terminal height on a short screen.
-	short.mode = modeFuzz
-	short.fuzzRows = sampleFuzzRows()
-	short.buildResultsTable()
-	if h := lipgloss.Height(short.View()); h > short.height {
-		t.Errorf("view height %d exceeds terminal height %d on a short terminal", h, short.height)
+	// The rendered view must fit within the terminal height on both screens.
+	for _, m := range []model{tall, short} {
+		m.mode = modeFuzz
+		m.fuzzRows = sampleFuzzRows()
+		m.buildResultsTable()
+		if h := lipgloss.Height(m.View()); h > m.height {
+			t.Errorf("view height %d exceeds terminal height %d", h, m.height)
+		}
 	}
 
 	// A very short terminal floors the table rather than going to zero/negative.

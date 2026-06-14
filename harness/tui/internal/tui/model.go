@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/e2e"
@@ -692,16 +693,19 @@ func (m *model) tableWidth() int {
 	return m.width
 }
 
-// resultsTableHeight is how many rows the results table should show: the
-// default tableHeight, shrunk to fit a short terminal (reserving room for the
-// other panes) and floored so it never collapses. Before the first
-// WindowSizeMsg (m.height == 0) it uses the default.
+// resultsTableHeight is how many rows the results table should show. The table
+// is front and centre, so it fills all the vertical space the surrounding
+// widgets leave: the terminal height minus the top panes (Mode + Configuration,
+// side by side), the actions bar, and the fixed chrome (title, results border +
+// header, help line). Both variable panes are measured directly so the fit
+// holds across modes and status states; floored at minTableHeight so it never
+// collapses. Before the first WindowSizeMsg (m.height == 0) it uses the default.
 func (m *model) resultsTableHeight() int {
 	if m.height <= 0 {
 		return tableHeight
 	}
-	h := m.height - resultsChrome
-	return max(min(h, tableHeight), minTableHeight)
+	chrome := lipgloss.Height(m.topPanes()) + lipgloss.Height(m.actionsBar()) + resultsFixedChrome
+	return max(m.height-chrome, minTableHeight)
 }
 
 // buildResultsTable rebuilds the results table from the in-memory rows for the
