@@ -32,22 +32,24 @@ func (s Summary) Success() bool {
 
 // Run drives a GDB fault-injection campaign: start QEMU halted with a gdbstub,
 // attach, install the technique's breakpoints, then loop continue/read/inject/
-// continue/read. Like the Python injector, rows are written to CSV only after
-// a full run; on ctx cancellation (TUI Stop) the rows collected so far are
-// still written, but a hard error aborts without writing.
-func Run(ctx context.Context, cfg config.E2E, events Events) (Summary, error) {
+// continue/read. It collects the per-iteration rows in memory and returns them;
+// persisting them to CSV is the caller's choice (the headless CLI writes them,
+// the TUI exports on demand). On ctx cancellation (TUI Stop) the rows gathered
+// so far are returned alongside ctx.Err(); a hard error returns them too so a
+// partial campaign is never silently dropped.
+func Run(ctx context.Context, cfg config.E2E, events Events) (Summary, []result.Row, error) {
 	var summary Summary
 
 	argv := append(qemu.BaseCommand(qemu.Binary, cfg.Elf),
 		"-S", "-gdb", fmt.Sprintf("tcp::%d", cfg.Port))
 	proc, err := qemu.Start(argv)
 	if err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 	defer proc.Terminate(cfg.StopTimeout)
 
 	if err := qemu.WaitForGdbPort(proc, cfg.Host, cfg.Port, cfg.QemuStartupTimeout); err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 
 	client, err := gdbmi.New(gdbmi.Config{
@@ -59,31 +61,27 @@ func Run(ctx context.Context, cfg config.E2E, events Events) (Summary, error) {
 		StopTimeout:    cfg.StopTimeout,
 	})
 	if err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 	defer client.Close()
 
 	breakpoints, err := client.InstallBreakpoints(cfg.Technique)
 	if err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 
 	rows := make([]result.Row, 0, cfg.Iterations)
 	for i := 0; i < cfg.Iterations; i++ {
 		row, err := runIteration(ctx, client, cfg, breakpoints)
 		if err != nil {
+			// Return whatever we gathered (possibly empty) so the caller can
+			// still keep a partial campaign; a cancellation is surfaced as
+			// ctx.Err() so callers classify it as a deliberate stop.
+			summary = finalize(rows)
 			if ctx.Err() != nil {
-				// Cancellation: persist what we have, mirror PLAN §5.
-				summary = finalize(rows)
-				if writeErr := result.WriteE2ECSV(cfg.CSV, rows); writeErr != nil {
-					// Still a deliberate stop; wrap ctx.Err() so the caller
-					// classifies it as a stop (errors.Is == context.Canceled)
-					// while surfacing that the partial results were not saved.
-					return summary, fmt.Errorf("could not save partial results: %v (%w)", writeErr, ctx.Err())
-				}
-				return summary, ctx.Err()
+				return summary, rows, ctx.Err()
 			}
-			return summary, err // hard error: abort without writing, like Python
+			return summary, rows, err
 		}
 		rows = append(rows, row)
 		if events.OnIteration != nil {
@@ -92,10 +90,7 @@ func Run(ctx context.Context, cfg config.E2E, events Events) (Summary, error) {
 	}
 
 	summary = finalize(rows)
-	if err := result.WriteE2ECSV(cfg.CSV, rows); err != nil {
-		return summary, err
-	}
-	return summary, nil
+	return summary, rows, nil
 }
 
 // runIteration performs one continue/read/inject/continue/read cycle,
