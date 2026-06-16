@@ -1,1 +1,0 @@
-"""Fault-injection campaign tooling."""
