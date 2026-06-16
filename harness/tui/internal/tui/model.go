@@ -150,11 +150,13 @@ func Run(repoRoot string) error {
 }
 
 func newModel(repoRoot string) model {
-	prog := progress.New(progress.WithDefaultGradient())
+	// gruvbox orange→yellow ramp, matching the accent palette.
+	prog := progress.New(progress.WithGradient("#fe8019", "#fabd2f"))
 	prog.Width = 40
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
 
 	m := model{
 		repoRoot: repoRoot,
@@ -307,6 +309,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleExportKey(msg)
 	}
 
+	// hjkl mirror the arrow keys everywhere except inside a focused text field,
+	// where they're literal input. Translating up front lets the rest of the
+	// handler stay arrow-key-only.
+	msg = m.vimNav(msg)
+
 	switch msg.String() {
 	case "esc":
 		if m.state != stateIdle && m.cancel != nil {
@@ -358,11 +365,32 @@ func (m model) handleResultsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "right":
 		m.results.nextPage()
 		return m, nil
-	case "pgup", "pgdown", "home", "end":
+	case "pgup", "pgdown", "home", "end", "g", "G":
+		// g/G (and home/end) are handled natively by the bubbles table keymap.
 		cmd := m.results.update(msg)
 		return m, cmd
 	}
 	return m, nil
+}
+
+// vimNav maps the hjkl movement keys onto their arrow-key equivalents so the
+// rest of Update can treat them identically. A focused text field is left alone,
+// where those letters are literal input.
+func (m *model) vimNav(msg tea.KeyMsg) tea.KeyMsg {
+	if f := m.focusedField(); f != nil && f.kind == textKind {
+		return msg
+	}
+	switch msg.String() {
+	case "h":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "j":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "k":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "l":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	}
+	return msg
 }
 
 func (m model) handleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

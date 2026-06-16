@@ -148,6 +148,7 @@ func (rt *resultsTable) rebuild() {
 		table.WithColumns(cols),
 		table.WithRows(rows),
 		table.WithHeight(h),
+		table.WithStyles(tableStyles()),
 	)
 }
 
