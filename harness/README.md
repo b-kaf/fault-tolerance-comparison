@@ -83,9 +83,8 @@ GDB/MI (via `gdb --interpreter=mi2`). GDB connects to QEMU's GDB Remote Serial
 Protocol endpoint, places breakpoints on the exported injection hooks, writes the
 fault-control globals, and records the result counters exposed by the firmware.
 The injector always launches `qemu-system-arm` and uses `gdb` on localhost.
-Defaults for iterations, GDB port, and timeouts come from the
-`HARNESS_E2E_*` environment variables (overridable via a project `.env`); CLI
-`--iterations` overrides them.
+Defaults for iterations, GDB port, and timeouts come from the `[e2e]` section of
+`harness/tui/config.toml`; CLI `--iterations` overrides them.
 
 ## Run A QEMU TCG Plugin Fuzz Campaign
 
@@ -117,9 +116,10 @@ class.
 
 Pass `--csv <path>` to write the CSV to a file instead of stdout.
 Defaults for trials, seed, timeout, and instruction budget come from the
-`HARNESS_FUZZ_*` environment variables (overridable via a project `.env`); CLI
-`--trials` and `--seed` override them. The QEMU plugin path comes from
-`QEMU_FT_FUZZ_PLUGIN`, which the `harness-tui` devenv script sets automatically.
+`[fuzz]` section of `harness/tui/config.toml`; CLI `--trials` and `--seed`
+override them. The QEMU plugin path comes from `[fuzz].plugin`, but
+`$QEMU_FT_FUZZ_PLUGIN` — which the `harness-tui` devenv script sets
+automatically — overrides it when present.
 
 ## Firmware ABI
 

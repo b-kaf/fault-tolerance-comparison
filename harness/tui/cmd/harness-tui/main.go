@@ -40,24 +40,25 @@ type CLI struct {
 // env is resolved once and injected into each command's Run by kong.
 type env struct {
 	repoRoot string
+	settings config.Settings
 }
 
 type tuiCmd struct{}
 
 func (c *tuiCmd) Run(e *env) error {
-	return tui.Run(e.repoRoot)
+	return tui.Run(e.repoRoot, e.settings)
 }
 
 type e2eCmd struct {
 	Technique  string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow" default:"tmr"`
 	Language   string `help:"Harness implementation language." enum:"c,zig" required:""`
 	Campaign   string `help:"Campaign name." default:"mixed"`
-	Iterations int    `help:"Iteration count (0 = $HARNESS_E2E_ITERATIONS or 20)." default:"0"`
+	Iterations int    `help:"Iteration count (0 = the config.toml [e2e].iterations default)." default:"0"`
 	CSV        string `help:"Write results to this CSV path instead of stdout." placeholder:"PATH"`
 }
 
 func (c *e2eCmd) Run(e *env) error {
-	cfg, err := run.ResolveE2E(e.repoRoot, c.Technique, c.Language, c.Campaign, c.Iterations, c.CSV)
+	cfg, err := run.ResolveE2E(e.repoRoot, e.settings, c.Technique, c.Language, c.Campaign, c.Iterations, c.CSV)
 	if err != nil {
 		return err
 	}
@@ -82,13 +83,13 @@ type fuzzCmd struct {
 	Technique string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow" default:"tmr"`
 	Language  string `help:"Harness implementation language." enum:"c,zig" required:""`
 	Campaign  string `help:"Campaign name." default:"reg-bitflip"`
-	Trials    int    `help:"Trial count (0 = $HARNESS_FUZZ_TRIALS or 20)." default:"0"`
-	Seed      string `help:"Campaign seed, u64 (empty = $HARNESS_FUZZ_SEED or 0xC0DEC0DE)."`
+	Trials    int    `help:"Trial count (0 = the config.toml [fuzz].trials default)." default:"0"`
+	Seed      string `help:"Campaign seed, u64 (empty = the config.toml [fuzz].seed default)."`
 	CSV       string `help:"Write results to this CSV path instead of stdout." placeholder:"PATH"`
 }
 
 func (c *fuzzCmd) Run(e *env) error {
-	cfg, err := run.ResolveFuzz(e.repoRoot, c.Technique, c.Language, c.Campaign, c.Trials, c.Seed, c.CSV)
+	cfg, err := run.ResolveFuzz(e.repoRoot, e.settings, c.Technique, c.Language, c.Campaign, c.Trials, c.Seed, c.CSV)
 	if err != nil {
 		return err
 	}
@@ -146,8 +147,8 @@ func realMain() int {
 	}
 }
 
-// newEnv resolves the repo root and loads the project .env once, before any
-// command runs.
+// newEnv resolves the repo root and loads harness/tui/config.toml once, before
+// any command runs.
 func newEnv() (*env, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -157,8 +158,11 @@ func newEnv() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.LoadDotenv(repoRoot)
-	return &env{repoRoot: repoRoot}, nil
+	settings, err := config.LoadSettings(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	return &env{repoRoot: repoRoot, settings: settings}, nil
 }
 
 func fail(err error) int {

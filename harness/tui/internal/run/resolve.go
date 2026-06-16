@@ -42,9 +42,9 @@ func resolveCommon(technique, language string) error {
 	return nil
 }
 
-// ResolveE2E validates inputs and fills env-derived defaults, returning a
-// runnable config.E2E. An empty iterations (0) means "use the env default".
-func ResolveE2E(repoRoot, technique, language, campaign string, iterations int, csvPath string) (config.E2E, error) {
+// ResolveE2E validates inputs and fills config-derived defaults, returning a
+// runnable config.E2E. An empty iterations (0) means "use the config default".
+func ResolveE2E(repoRoot string, s config.Settings, technique, language, campaign string, iterations int, csvPath string) (config.E2E, error) {
 	var cfg config.E2E
 	if err := resolveCommon(technique, language); err != nil {
 		return cfg, err
@@ -59,34 +59,13 @@ func ResolveE2E(repoRoot, technique, language, campaign string, iterations int, 
 		return cfg, fmt.Errorf("%s", msg)
 	}
 	if iterations == 0 {
-		v, err := config.EnvInt("HARNESS_E2E_ITERATIONS", 20)
-		if err != nil {
-			return cfg, err
-		}
-		iterations = int(v)
+		iterations = s.E2E.Iterations
 	}
 	if iterations <= 0 {
 		return cfg, fmt.Errorf("iterations must be positive")
 	}
 	if iterations > maxRunCount {
 		return cfg, fmt.Errorf("iterations must be <= %d", maxRunCount)
-	}
-
-	port, err := config.EnvInt("HARNESS_E2E_GDB_PORT", 1234)
-	if err != nil {
-		return cfg, err
-	}
-	connectTimeout, err := config.EnvSeconds("HARNESS_E2E_CONNECT_TIMEOUT", 10.0)
-	if err != nil {
-		return cfg, err
-	}
-	stopTimeout, err := config.EnvSeconds("HARNESS_E2E_STOP_TIMEOUT", 10.0)
-	if err != nil {
-		return cfg, err
-	}
-	startupTimeout, err := config.EnvSeconds("HARNESS_E2E_QEMU_STARTUP_TIMEOUT", 10.0)
-	if err != nil {
-		return cfg, err
 	}
 
 	elf := config.E2EElfPath(repoRoot, technique, language)
@@ -100,20 +79,20 @@ func ResolveE2E(repoRoot, technique, language, campaign string, iterations int, 
 		Language:           language,
 		Campaign:           campaign,
 		CSV:                csvPath,
-		Port:               int(port),
-		ConnectTimeout:     connectTimeout,
-		StopTimeout:        stopTimeout,
-		QemuStartupTimeout: startupTimeout,
+		Port:               s.E2E.GdbPort,
+		ConnectTimeout:     config.Seconds(s.E2E.ConnectTimeout),
+		StopTimeout:        config.Seconds(s.E2E.StopTimeout),
+		QemuStartupTimeout: config.Seconds(s.E2E.QemuStartupTimeout),
 		Elf:                elf,
 		Host:               config.GdbHost,
 		Gdb:                config.Gdb,
 	}, nil
 }
 
-// ResolveFuzz validates inputs and fills env-derived defaults, returning a
-// runnable config.Fuzz. Empty trials (0) means "use the env default"; empty
-// seedText means "use the env default".
-func ResolveFuzz(repoRoot, technique, language, campaign string, trials int, seedText, csvPath string) (config.Fuzz, error) {
+// ResolveFuzz validates inputs and fills config-derived defaults, returning a
+// runnable config.Fuzz. Empty trials (0) means "use the config default"; empty
+// seedText means "use the config default".
+func ResolveFuzz(repoRoot string, s config.Settings, technique, language, campaign string, trials int, seedText, csvPath string) (config.Fuzz, error) {
 	var cfg config.Fuzz
 	if err := resolveCommon(technique, language); err != nil {
 		return cfg, err
@@ -125,11 +104,7 @@ func ResolveFuzz(repoRoot, technique, language, campaign string, trials int, see
 		return cfg, fmt.Errorf("invalid --campaign %q for fuzz", campaign)
 	}
 	if trials == 0 {
-		v, err := config.EnvInt("HARNESS_FUZZ_TRIALS", 20)
-		if err != nil {
-			return cfg, err
-		}
-		trials = int(v)
+		trials = s.Fuzz.Trials
 	}
 	if trials <= 0 {
 		return cfg, fmt.Errorf("trials must be positive")
@@ -138,33 +113,17 @@ func ResolveFuzz(repoRoot, technique, language, campaign string, trials int, see
 		return cfg, fmt.Errorf("trials must be <= %d", maxRunCount)
 	}
 
-	var seed uint64
-	if seedText != "" {
-		v, err := config.ParseU64(seedText)
-		if err != nil {
-			return cfg, err
-		}
-		seed = v
-	} else {
-		v, err := config.EnvU64("HARNESS_FUZZ_SEED", 0xC0DEC0DE)
-		if err != nil {
-			return cfg, err
-		}
-		seed = v
+	if seedText == "" {
+		seedText = s.Fuzz.Seed
 	}
-
-	timeout, err := config.EnvSeconds("HARNESS_FUZZ_TIMEOUT", 5.0)
-	if err != nil {
-		return cfg, err
-	}
-	maxInstructions, err := config.EnvU64("HARNESS_FUZZ_MAX_INSTRUCTIONS", 1_000_000)
+	seed, err := config.ParseU64(seedText)
 	if err != nil {
 		return cfg, err
 	}
 
-	plugin := os.Getenv("QEMU_FT_FUZZ_PLUGIN")
+	plugin := s.Fuzz.Plugin
 	if plugin == "" {
-		return cfg, fmt.Errorf("QEMU_FT_FUZZ_PLUGIN is required in the environment or .env")
+		return cfg, fmt.Errorf("fuzz plugin path is unset: set QEMU_FT_FUZZ_PLUGIN or [fuzz].plugin in %s", config.ConfigPath(repoRoot))
 	}
 	if _, err := os.Stat(plugin); err != nil {
 		return cfg, fmt.Errorf("plugin not found: %s", plugin)
@@ -182,8 +141,8 @@ func ResolveFuzz(repoRoot, technique, language, campaign string, trials int, see
 		Trials:          trials,
 		Seed:            seed,
 		CSV:             csvPath,
-		Timeout:         timeout,
-		MaxInstructions: maxInstructions,
+		Timeout:         config.Seconds(s.Fuzz.Timeout),
+		MaxInstructions: s.Fuzz.MaxInstructions,
 		Plugin:          plugin,
 		Elf:             elf,
 	}, nil

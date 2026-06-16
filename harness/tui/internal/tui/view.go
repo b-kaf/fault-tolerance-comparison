@@ -223,7 +223,7 @@ func (m model) resultsPane() string {
 		style = paneFocusedStyle
 	}
 
-	if !m.hasTable {
+	if m.resultCount() == 0 {
 		return style.Render(paneTitle("Results") + "\n" +
 			mutedStyle.Render("no results yet — run a campaign"))
 	}

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/result"
 )
 
@@ -83,7 +84,7 @@ func TestFuzzTableCuratedFirst(t *testing.T) {
 }
 
 func TestResultsAppearAndPageAfterFinish(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.width, m.height = 80, 40
 	m.state = stateRunning
 	for _, row := range sampleFuzzRows() {
@@ -94,11 +95,11 @@ func TestResultsAppearAndPageAfterFinish(t *testing.T) {
 	m.mode = modeFuzz
 	m = update(t, m, engineFinishedMsg{summary: "passed=1, sdc=1", success: true})
 
-	if !m.hasTable {
-		t.Fatal("expected a results table after finish")
+	if m.resultCount() == 0 {
+		t.Fatal("expected results rows after finish")
 	}
-	if m.resultsIndex() <= m.actionBarIndex() {
-		t.Fatal("results focus stop should follow the action bar")
+	if m.resultsIndex() >= m.actionBarIndex() {
+		t.Fatal("results focus stop should precede the action bar")
 	}
 
 	// Tab around to the results pane.
@@ -129,14 +130,11 @@ func TestResultsAppearAndPageAfterFinish(t *testing.T) {
 // user's current column page and selected row (finding #3), rather than
 // snapping back to page 0 / row 0.
 func TestResizePreservesPageAndCursor(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.width, m.height = 80, 40
 	m.mode = modeFuzz
 	m.fuzzRows = sampleFuzzRows()
 	m.buildResultsTable()
-	if !m.hasTable {
-		t.Fatal("setup: expected a table")
-	}
 	if len(m.results.pages) < 2 {
 		t.Fatalf("setup: expected multiple column pages, got %d", len(m.results.pages))
 	}
@@ -165,9 +163,9 @@ func TestResizePreservesPageAndCursor(t *testing.T) {
 // with a taller terminal, shrinks on a short one, never overflows the screen,
 // and floors at minTableHeight so it can't collapse.
 func TestTableHeightFitsTerminal(t *testing.T) {
-	tall := newModel("/repo")
+	tall := newModel("/repo", config.DefaultSettings())
 	tall.width, tall.height = 100, 60
-	short := newModel("/repo")
+	short := newModel("/repo", config.DefaultSettings())
 	short.width, short.height = 100, 30
 
 	tallH := tall.resultsTableHeight()
@@ -192,19 +190,17 @@ func TestTableHeightFitsTerminal(t *testing.T) {
 	}
 
 	// A very short terminal floors the table rather than going to zero/negative.
-	tiny := newModel("/repo")
+	tiny := newModel("/repo", config.DefaultSettings())
 	tiny.width, tiny.height = 100, 5
 	if got := tiny.resultsTableHeight(); got != minTableHeight {
 		t.Errorf("tiny terminal table height = %d, want floor %d", got, minTableHeight)
 	}
 }
 
-// When the results table goes away while focus is on it, focus must be pulled
-// back to a reachable widget rather than left stranded past the last focus stop
-// (finding #5). This covers both the clearResults path (Clear / start-of-run)
-// and the buildResultsTable path (a rebuild that finds no rows).
-func TestClearResultsPullsFocusFromResultsPane(t *testing.T) {
-	m := newModel("/repo")
+// Clearing the rows empties the results but keeps the results pane as a valid,
+// in-range focus stop: the table is always navigable, even with no rows.
+func TestClearResultsKeepsResultsAsFocusStop(t *testing.T) {
+	m := newModel("/repo", config.DefaultSettings())
 	m.width, m.height = 80, 40
 	m.e2eRows = sampleE2ERows()
 	m.buildResultsTable()
@@ -214,16 +210,16 @@ func TestClearResultsPullsFocusFromResultsPane(t *testing.T) {
 	}
 
 	m.clearResults()
-	if m.hasTable {
-		t.Fatal("clearResults should drop the table")
+	if m.resultCount() != 0 {
+		t.Fatal("clearResults should drop the rows")
 	}
-	if m.onResults() || m.focus >= m.focusStops() {
-		t.Errorf("focus %d not pulled back after clear (stops=%d)", m.focus, m.focusStops())
+	if !m.onResults() || m.focus >= m.focusStops() {
+		t.Errorf("focus %d should stay on the (now-empty) results stop (stops=%d)", m.focus, m.focusStops())
 	}
 }
 
-func TestBuildResultsTableStrandsNoFocus(t *testing.T) {
-	m := newModel("/repo")
+func TestBuildResultsTableWithNoRowsKeepsFocus(t *testing.T) {
+	m := newModel("/repo", config.DefaultSettings())
 	m.width, m.height = 80, 40
 	m.mode = modeFuzz
 	m.fuzzRows = sampleFuzzRows()
@@ -233,33 +229,33 @@ func TestBuildResultsTableStrandsNoFocus(t *testing.T) {
 		t.Fatal("setup: expected focus on results")
 	}
 
-	// Rebuild with the rows gone (e.g. a finish/resize that finds nothing):
-	// the table disappears and focus must not be left out of range.
+	// Rebuild with the rows gone (e.g. a finish/resize that finds nothing): the
+	// table is empty but remains a valid, focused, in-range stop.
 	m.fuzzRows = nil
 	m.buildResultsTable()
-	if m.hasTable {
-		t.Fatal("expected no table after rows cleared")
+	if m.resultCount() != 0 {
+		t.Fatal("expected no rows after clearing")
 	}
-	if m.onResults() || m.focus >= m.focusStops() {
-		t.Errorf("focus %d stranded out of range after table removed (stops=%d)", m.focus, m.focusStops())
+	if !m.onResults() || m.focus >= m.focusStops() {
+		t.Errorf("focus %d should stay on the empty results stop (stops=%d)", m.focus, m.focusStops())
 	}
 }
 
-func TestModeSwitchClearsTable(t *testing.T) {
-	m := newModel("/repo")
+func TestModeSwitchClearsRows(t *testing.T) {
+	m := newModel("/repo", config.DefaultSettings())
 	m.width = 80
 	m.e2eRows = sampleE2ERows()
 	m.buildResultsTable()
-	if !m.hasTable {
-		t.Fatal("setup: expected table")
+	if m.resultCount() == 0 {
+		t.Fatal("setup: expected rows")
 	}
 	// Focus the mode toggle and switch.
 	m.focus = 0
 	m = update(t, m, keyType(tea.KeyRight))
-	if m.hasTable {
-		t.Error("mode switch should clear the results table")
+	if m.resultCount() != 0 {
+		t.Error("mode switch should clear the results rows")
 	}
 	if m.focus >= m.focusStops() {
-		t.Errorf("focus %d out of range after clearing table (stops=%d)", m.focus, m.focusStops())
+		t.Errorf("focus %d out of range after clearing rows (stops=%d)", m.focus, m.focusStops())
 	}
 }

@@ -3,13 +3,13 @@ module github.com/b-kaf/fault-tolerance-comparison/harness/tui
 go 1.26.2
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/alecthomas/kong v1.15.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cyrus-and/gdb v0.0.0-20260120112000-c4757ad21baa
 	github.com/dchest/blake2b v1.0.0
-	github.com/joho/godotenv v1.5.1
 )
 
 require (

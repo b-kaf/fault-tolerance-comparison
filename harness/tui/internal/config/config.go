@@ -1,6 +1,7 @@
 // Package config carries run configuration for the e2e and fuzz engines and
-// the env/.env defaulting that the Python CLIs got from os.environ +
-// python-dotenv.
+// the Settings defaults loaded from harness/tui/config.toml. The Python CLIs
+// took these from os.environ + python-dotenv; the Go port reads a single TOML
+// file instead, falling back to baked-in defaults when it is absent.
 package config
 
 import (
@@ -10,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/joho/godotenv"
+	"github.com/BurntSushi/toml"
 )
 
 const (
@@ -49,16 +50,80 @@ type Fuzz struct {
 	Elf             string
 }
 
-// LoadDotenv loads .env without overriding existing environment variables,
-// matching load_dotenv(override=False). The Python CLIs ran from their own
-// directories; we look in the current directory and the repo root.
-func LoadDotenv(repoRoot string) {
-	for _, dir := range []string{".", repoRoot} {
-		path := filepath.Join(dir, ".env")
-		if _, err := os.Stat(path); err == nil {
-			_ = godotenv.Load(path)
+// Settings holds the tunable defaults previously supplied via .env / env vars.
+// It is decoded from harness/tui/config.toml on top of DefaultSettings, so any
+// key the file omits keeps its built-in default.
+type Settings struct {
+	E2E  E2ESettings  `toml:"e2e"`
+	Fuzz FuzzSettings `toml:"fuzz"`
+}
+
+// E2ESettings are the e2e engine defaults. Timeouts are in seconds.
+type E2ESettings struct {
+	Iterations         int     `toml:"iterations"`
+	GdbPort            int     `toml:"gdb_port"`
+	ConnectTimeout     float64 `toml:"connect_timeout"`
+	StopTimeout        float64 `toml:"stop_timeout"`
+	QemuStartupTimeout float64 `toml:"qemu_startup_timeout"`
+}
+
+// FuzzSettings are the fuzz engine defaults. Seed is a base-0 string (so 0x
+// hex is natural and the full u64 range is representable); Timeout is seconds.
+type FuzzSettings struct {
+	Trials          int     `toml:"trials"`
+	Seed            string  `toml:"seed"`
+	Timeout         float64 `toml:"timeout"`
+	MaxInstructions uint64  `toml:"max_instructions"`
+	Plugin          string  `toml:"plugin"`
+}
+
+// DefaultSettings are the built-in defaults, identical to the values the Python
+// CLIs hard-coded as fallbacks. LoadSettings merges config.toml over these.
+func DefaultSettings() Settings {
+	return Settings{
+		E2E: E2ESettings{
+			Iterations:         20,
+			GdbPort:            1234,
+			ConnectTimeout:     10.0,
+			StopTimeout:        10.0,
+			QemuStartupTimeout: 10.0,
+		},
+		Fuzz: FuzzSettings{
+			Trials:          20,
+			Seed:            "0xc0dec0de",
+			Timeout:         5.0,
+			MaxInstructions: 1_000_000,
+			Plugin:          "",
+		},
+	}
+}
+
+// ConfigPath is the location of the config file relative to the repo root.
+func ConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, "harness", "tui", "config.toml")
+}
+
+// LoadSettings starts from DefaultSettings, decodes harness/tui/config.toml on
+// top when present, then lets $QEMU_FT_FUZZ_PLUGIN override the plugin path so
+// the Nix-built store path the devenv shell injects always wins. A missing
+// file is not an error; a malformed one is.
+func LoadSettings(repoRoot string) (Settings, error) {
+	s := DefaultSettings()
+	path := ConfigPath(repoRoot)
+	if _, err := os.Stat(path); err == nil {
+		if _, err := toml.DecodeFile(path, &s); err != nil {
+			return s, fmt.Errorf("%s: %w", path, err)
 		}
 	}
+	if v := os.Getenv("QEMU_FT_FUZZ_PLUGIN"); v != "" {
+		s.Fuzz.Plugin = v
+	}
+	return s, nil
+}
+
+// Seconds converts a float seconds value (as stored in Settings) to a Duration.
+func Seconds(f float64) time.Duration {
+	return time.Duration(f * float64(time.Second))
 }
 
 // ParseU64 parses with base-0 semantics (0x.., 0o.., decimal) like int(s, 0).
@@ -80,45 +145,4 @@ func ParsePositiveInt(s string) (int, error) {
 		return 0, fmt.Errorf("value must be positive: %q", s)
 	}
 	return v, nil
-}
-
-// EnvInt reads an integer env var with base-0 semantics, returning def when
-// unset or empty.
-func EnvInt(name string, def int64) (int64, error) {
-	text := os.Getenv(name)
-	if text == "" {
-		return def, nil
-	}
-	v, err := strconv.ParseInt(text, 0, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", name, err)
-	}
-	return v, nil
-}
-
-// EnvU64 reads an unsigned integer env var with base-0 semantics.
-func EnvU64(name string, def uint64) (uint64, error) {
-	text := os.Getenv(name)
-	if text == "" {
-		return def, nil
-	}
-	v, err := strconv.ParseUint(text, 0, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", name, err)
-	}
-	return v, nil
-}
-
-// EnvSeconds reads a float env var expressing seconds, like the Python
-// float(os.environ.get(...)) timeouts.
-func EnvSeconds(name string, def float64) (time.Duration, error) {
-	text := os.Getenv(name)
-	if text == "" {
-		return time.Duration(def * float64(time.Second)), nil
-	}
-	v, err := strconv.ParseFloat(text, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", name, err)
-	}
-	return time.Duration(v * float64(time.Second)), nil
 }
