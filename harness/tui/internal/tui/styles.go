@@ -1,15 +1,20 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/lipgloss"
+)
 
-// Palette and reusable styles for the TUI panes.
+// Palette and reusable styles for the TUI panes — gruvbox dark.
 var (
-	colorAccent   = lipgloss.Color("63")  // violet
-	colorMuted    = lipgloss.Color("241") // grey
-	colorOK       = lipgloss.Color("42")  // green
-	colorWarn     = lipgloss.Color("214") // amber
-	colorErr      = lipgloss.Color("203") // red
-	colorSelected = lipgloss.Color("231") // near-white
+	colorBg       = lipgloss.Color("#282828") // gruvbox bg0
+	colorAccent   = lipgloss.Color("#fabd2f") // gruvbox bright yellow
+	colorMuted    = lipgloss.Color("#928374") // gruvbox gray
+	colorOK       = lipgloss.Color("#b8bb26") // gruvbox bright green
+	colorWarn     = lipgloss.Color("#fe8019") // gruvbox bright orange
+	colorErr      = lipgloss.Color("#fb4934") // gruvbox bright red
+	colorSelected = lipgloss.Color("#ebdbb2") // gruvbox fg1
+	colorDisabled = lipgloss.Color("#665c54") // gruvbox bg3
 
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 
@@ -36,13 +41,30 @@ var (
 	buttonStyle = lipgloss.NewStyle().Padding(0, 2).Foreground(colorMuted)
 
 	buttonFocusedStyle = lipgloss.NewStyle().Padding(0, 2).
-				Foreground(lipgloss.Color("232")).
+				Foreground(colorBg).
 				Background(colorAccent).
 				Bold(true)
 
-	buttonDisabledStyle = lipgloss.NewStyle().Padding(0, 2).Foreground(lipgloss.Color("238"))
+	buttonDisabledStyle = lipgloss.NewStyle().Padding(0, 2).Foreground(colorDisabled)
 )
 
 func paneTitle(title string) string {
 	return titleStyle.Render(title)
+}
+
+// tableStyles dresses the bubbles/table in the gruvbox palette: an accent header
+// over a muted rule, fg cells, and a selected row that inverts to the accent so
+// it reads the same as the focused buttons and borders.
+func tableStyles() table.Styles {
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		Foreground(colorAccent).
+		BorderForeground(colorMuted).
+		Bold(true)
+	s.Cell = s.Cell.Foreground(colorSelected)
+	s.Selected = s.Selected.
+		Foreground(colorBg).
+		Background(colorAccent).
+		Bold(true)
+	return s
 }

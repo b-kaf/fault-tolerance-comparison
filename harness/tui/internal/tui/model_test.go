@@ -23,6 +23,8 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 
 func keyType(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
 
+func keyRune(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+
 func TestNewModelDefaults(t *testing.T) {
 	m := newModel("/repo")
 	if m.mode != modeE2E {
@@ -64,6 +66,45 @@ func TestFocusNavigationWraps(t *testing.T) {
 	m = update(t, m, keyType(tea.KeyShiftTab))
 	if !m.onActions() {
 		t.Errorf("shift-tab from mode should land on actions, focus = %d", m.focus)
+	}
+}
+
+func TestVimKeysNavigate(t *testing.T) {
+	m := newModel("/repo")
+	// 'l' acts like → on the mode toggle: switch to fuzz.
+	m = update(t, m, keyRune('l'))
+	if m.mode != modeFuzz {
+		t.Fatalf("after 'l', mode = %v, want fuzz", m.mode)
+	}
+	// 'j' acts like ↓: advance focus off the mode toggle onto the first field.
+	m = update(t, m, keyRune('j'))
+	if m.focus != 1 {
+		t.Fatalf("after 'j', focus = %d, want first field (1)", m.focus)
+	}
+	// 'k' acts like ↑: back to the mode toggle.
+	m = update(t, m, keyRune('k'))
+	if !m.onMode() {
+		t.Errorf("after 'k', focus = %d, want mode toggle", m.focus)
+	}
+}
+
+func TestVimKeysAreLiteralInTextField(t *testing.T) {
+	m := newModel("/repo")
+	// Focus the Iterations text field (last e2e field).
+	for m.focus != fIterations+1 {
+		m = update(t, m, keyType(tea.KeyTab))
+	}
+	if f := m.focusedField(); f == nil || f.kind != textKind {
+		t.Fatalf("focus %d is not a text field", m.focus)
+	}
+	before := m.focus
+	// 'j' should be typed into the field, not move focus.
+	m = update(t, m, keyRune('j'))
+	if m.focus != before {
+		t.Errorf("focus moved on 'j' in text field: %d, want %d", m.focus, before)
+	}
+	if got := m.e2eFields[fIterations].value(); !strings.HasSuffix(got, "j") {
+		t.Errorf("text field value = %q, want trailing 'j'", got)
 	}
 }
 
