@@ -1,0 +1,24 @@
+# harness-tui configuration.
+#
+# Defaults for the e2e (GDB fault-injection) and fuzz (QEMU TCG plugin) engines,
+# shared by the TUI and the headless `e2e` / `fuzz` subcommands. Every key is
+# optional: an omitted key falls back to the built-in default shown below.
+# CLI flags (--iterations, --trials, --seed) override the values here.
+
+[e2e]
+iterations = 20            # default iteration count per campaign
+gdb_port = 1234            # TCP port QEMU exposes for GDB Remote Serial Protocol
+connect_timeout = 10.0     # seconds to wait for GDB to attach to QEMU
+stop_timeout = 10.0        # seconds to wait for a breakpoint stop
+qemu_startup_timeout = 10.0 # seconds to wait for QEMU to come up
+
+[fuzz]
+trials = 20                # default trial count per campaign
+seed = "0xc0dec0de"        # campaign seed, base-0 (0x hex, 0o octal, or decimal)
+timeout = 5.0              # seconds per trial before it is declared a hang
+max_instructions = 1000000 # instruction budget per trial
+
+# QEMU TCG plugin (qemu-ft-fuzz.so). The devenv `harness-tui` script exports
+# $QEMU_FT_FUZZ_PLUGIN with the Nix-built store path, which overrides this.
+# Set an absolute path here for standalone use outside the devenv shell.
+plugin = ""

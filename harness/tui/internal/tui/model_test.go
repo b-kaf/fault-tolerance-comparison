@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/result"
 )
 
@@ -26,7 +27,7 @@ func keyType(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
 func keyRune(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
 func TestNewModelDefaults(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	if m.mode != modeE2E {
 		t.Errorf("default mode = %v, want e2e", m.mode)
 	}
@@ -39,7 +40,7 @@ func TestNewModelDefaults(t *testing.T) {
 }
 
 func TestModeToggle(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	// focus starts on the mode toggle; right switches to fuzz.
 	m = update(t, m, keyType(tea.KeyRight))
 	if m.mode != modeFuzz {
@@ -51,7 +52,7 @@ func TestModeToggle(t *testing.T) {
 }
 
 func TestFocusNavigationWraps(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	if !m.onMode() {
 		t.Fatal("focus should start on mode toggle")
 	}
@@ -70,7 +71,7 @@ func TestFocusNavigationWraps(t *testing.T) {
 }
 
 func TestVimKeysNavigate(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	// 'l' acts like → on the mode toggle: switch to fuzz.
 	m = update(t, m, keyRune('l'))
 	if m.mode != modeFuzz {
@@ -89,7 +90,7 @@ func TestVimKeysNavigate(t *testing.T) {
 }
 
 func TestVimKeysAreLiteralInTextField(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	// Focus the Iterations text field (last e2e field).
 	for m.focus != fIterations+1 {
 		m = update(t, m, keyType(tea.KeyTab))
@@ -109,7 +110,7 @@ func TestVimKeysAreLiteralInTextField(t *testing.T) {
 }
 
 func TestCampaignReloadsOnTechniqueChange(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	// Move focus to the technique field (focus index 1).
 	m = update(t, m, keyType(tea.KeyTab))
 	if m.focus != 1 {
@@ -130,7 +131,7 @@ func TestCampaignReloadsOnTechniqueChange(t *testing.T) {
 }
 
 func TestStartInvalidIterationsShowsError(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.e2eFields[fIterations].input.SetValue("abc")
 	next, cmd := m.startRun()
 	m = next.(model)
@@ -148,7 +149,7 @@ func TestStartInvalidIterationsShowsError(t *testing.T) {
 func TestStartMissingELFShowsError(t *testing.T) {
 	// A repoRoot with no zig-out: ResolveE2E fails on the ELF stat, surfaced
 	// as a status error without launching the engine.
-	m := newModel(t.TempDir())
+	m := newModel(t.TempDir(), config.DefaultSettings())
 	next, _ := m.startRun()
 	m = next.(model)
 	if m.state != stateIdle {
@@ -160,7 +161,7 @@ func TestStartMissingELFShowsError(t *testing.T) {
 }
 
 func TestEngineProgressAndFinished(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.state = stateRunning
 	m.progressTot = 10
 
@@ -187,7 +188,7 @@ func TestEngineProgressAndFinished(t *testing.T) {
 // must not be shown as a green "done" (finding #2): the outcome is flagged as
 // a warning so a failing-but-completed e2e campaign is visually distinct.
 func TestFinishedWithFailuresWarns(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.state = stateRunning
 	m = update(t, m, engineFinishedMsg{summary: "passes=18 failures=2 (20 iterations)", success: false})
 	if m.state != stateIdle {
@@ -202,7 +203,7 @@ func TestFinishedWithFailuresWarns(t *testing.T) {
 }
 
 func TestFinishedCancellationKeepsPartial(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.state = stateRunning
 	m = update(t, m, engineFinishedMsg{err: context.Canceled})
 	if m.state != stateIdle {
@@ -214,7 +215,7 @@ func TestFinishedCancellationKeepsPartial(t *testing.T) {
 }
 
 func TestFuzzHistogramAccumulates(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m = update(t, m, keyType(tea.KeyRight)) // switch to fuzz
 	m.state = stateRunning
 	m = update(t, m, engineProgressMsg{cur: 1, total: 3, resultClass: "passed"})
@@ -226,7 +227,7 @@ func TestFuzzHistogramAccumulates(t *testing.T) {
 }
 
 func TestBuildFinishedStatus(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.state = stateBuilding
 	ok := update(t, m, buildFinishedMsg{})
 	if ok.state != stateIdle || ok.statusKind != statusOK {
@@ -237,7 +238,7 @@ func TestBuildFinishedStatus(t *testing.T) {
 // Export is on demand: with no results, activating it must not open the prompt
 // and must warn instead of writing anything.
 func TestExportWithNoResultsWarns(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	next, _ := m.beginExport()
 	m = next.(model)
 	if m.exporting {
@@ -251,7 +252,7 @@ func TestExportWithNoResultsWarns(t *testing.T) {
 // Activating Export opens a prompt pre-filled with an auto-named CSV path for
 // the active mode; the run itself never writes a CSV anymore.
 func TestExportPromptOpensWithAutoName(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.e2eRows = []result.Row{{"technique": "tmr"}}
 	next, _ := m.beginExport()
 	m = next.(model)
@@ -266,7 +267,7 @@ func TestExportPromptOpensWithAutoName(t *testing.T) {
 
 // Esc cancels the prompt without writing; the rows are untouched.
 func TestExportPromptEscCancels(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.e2eRows = []result.Row{{"technique": "tmr"}}
 	next, _ := m.beginExport()
 	m = next.(model)
@@ -282,7 +283,7 @@ func TestExportPromptEscCancels(t *testing.T) {
 // Enter on the prompt writes the in-memory rows to the typed path and reports
 // the count; the run no longer auto-exports, so this is the only write path.
 func TestExportPromptEnterWritesCSV(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.e2eRows = []result.Row{{"technique": "tmr"}, {"technique": "tmr"}}
 	next, _ := m.beginExport()
 	m = next.(model)
@@ -305,7 +306,7 @@ func TestExportPromptEnterWritesCSV(t *testing.T) {
 // An empty path on Enter is rejected and the prompt stays open so the user can
 // fix it (no file is written).
 func TestExportPromptRejectsEmptyPath(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.e2eRows = []result.Row{{"technique": "tmr"}}
 	next, _ := m.beginExport()
 	m = next.(model)
@@ -341,7 +342,7 @@ func TestIsCancelUsesErrorsIs(t *testing.T) {
 // A Stop whose partial-save failed is wrapped around context.Canceled, so it is
 // still classified as a stop (warn), with the save failure surfaced (finding #8).
 func TestFinishedWrappedCancelIsStopWithDetail(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.state = stateRunning
 	wrapped := fmt.Errorf("could not save partial results: boom (%w)", context.Canceled)
 	m = update(t, m, engineFinishedMsg{err: wrapped})
@@ -356,7 +357,7 @@ func TestFinishedWrappedCancelIsStopWithDetail(t *testing.T) {
 // Switching mode must reset the action cursor so it can't be left on an action
 // that is disabled in the new state (finding #10).
 func TestModeSwitchResetsActionCursor(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.actionCursor = actStop // disabled while idle
 	m.focus = 0
 	m = update(t, m, keyType(tea.KeyRight))
@@ -368,24 +369,23 @@ func TestModeSwitchResetsActionCursor(t *testing.T) {
 	}
 }
 
-// envDefaultString returns the raw env value (honoring a literal 0) and the
-// default when unset, rather than round-tripping through a u64 parse (finding #9).
-func TestEnvDefaultStringRawValue(t *testing.T) {
-	if got := envDefaultString("HARNESS_TUI_TEST_UNSET_VAR", "0xC0DEC0DE"); got != "0xC0DEC0DE" {
-		t.Errorf("unset = %q, want the default", got)
+// The seed field is seeded from Settings verbatim, not round-tripped through a
+// u64 parse-and-reformat (finding #9): a configured "0" stays "0" and a hex
+// string keeps its exact spelling.
+func TestSeedFieldUsesSettingsVerbatim(t *testing.T) {
+	s := config.DefaultSettings()
+	s.Fuzz.Seed = "0"
+	if got := newModel("/repo", s).fuzzFields[fzSeed].value(); got != "0" {
+		t.Errorf("seed field = %q, want \"0\" (a real 0 must not be replaced by the default)", got)
 	}
-	t.Setenv("HARNESS_TUI_TEST_SEED", "0")
-	if got := envDefaultString("HARNESS_TUI_TEST_SEED", "0xC0DEC0DE"); got != "0" {
-		t.Errorf("seed=0 = %q, want \"0\" (a real 0 must not be replaced by the default)", got)
-	}
-	t.Setenv("HARNESS_TUI_TEST_SEED", "42")
-	if got := envDefaultString("HARNESS_TUI_TEST_SEED", "0xC0DEC0DE"); got != "42" {
-		t.Errorf("raw = %q, want \"42\" (value must not be reformatted)", got)
+	s.Fuzz.Seed = "0xDEADBEEF"
+	if got := newModel("/repo", s).fuzzFields[fzSeed].value(); got != "0xDEADBEEF" {
+		t.Errorf("seed field = %q, want \"0xDEADBEEF\" (value must not be reformatted)", got)
 	}
 }
 
 func TestViewRendersPanes(t *testing.T) {
-	m := newModel("/repo")
+	m := newModel("/repo", config.DefaultSettings())
 	m.width, m.height = 100, 40
 	view := m.View()
 	// The actions bar dropped its "Actions" title to stay thin; the "Start"

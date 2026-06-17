@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -91,6 +90,7 @@ var actionNames = map[action]string{
 
 type model struct {
 	repoRoot string
+	settings config.Settings
 	mode     appMode
 
 	e2eFields  []field
@@ -122,7 +122,6 @@ type model struct {
 	e2eRows  []result.Row
 	fuzzRows []map[string]string
 	results  resultsTable
-	hasTable bool
 
 	status     string
 	statusKind statusKind
@@ -143,13 +142,13 @@ const (
 )
 
 // Run starts the TUI event loop.
-func Run(repoRoot string) error {
-	p := tea.NewProgram(newModel(repoRoot), tea.WithAltScreen())
+func Run(repoRoot string, settings config.Settings) error {
+	p := tea.NewProgram(newModel(repoRoot, settings), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
 
-func newModel(repoRoot string) model {
+func newModel(repoRoot string, settings config.Settings) model {
 	// gruvbox orange→yellow ramp, matching the accent palette.
 	prog := progress.New(progress.WithGradient("#fe8019", "#fabd2f"))
 	prog.Width = 40
@@ -160,6 +159,7 @@ func newModel(repoRoot string) model {
 
 	m := model{
 		repoRoot: repoRoot,
+		settings: settings,
 		mode:     modeE2E,
 		progress: prog,
 		spinner:  sp,
@@ -169,9 +169,9 @@ func newModel(repoRoot string) model {
 	defaultTechnique := run.Techniques[0] // tmr
 	defaultLanguage := "zig"
 
-	iterDefault := envDefaultInt("HARNESS_E2E_ITERATIONS", 20)
-	trialsDefault := envDefaultInt("HARNESS_FUZZ_TRIALS", 20)
-	seedDefault := envDefaultString("HARNESS_FUZZ_SEED", "0xC0DEC0DE")
+	iterDefault := settings.E2E.Iterations
+	trialsDefault := settings.Fuzz.Trials
+	seedDefault := settings.Fuzz.Seed
 
 	m.e2eFields = []field{
 		fTechnique:  newSelect("Technique", run.Techniques, defaultTechnique),
@@ -186,6 +186,10 @@ func newModel(repoRoot string) model {
 		fzTrials:    newText("Trials", fmt.Sprintf("%d", trialsDefault)),
 		fzSeed:      newText("Seed", seedDefault),
 	}
+
+	// Start with an empty (but valid) table so the results pane renders and is
+	// navigable before any run produces rows.
+	m.buildResultsTable()
 
 	return m
 }
@@ -204,27 +208,21 @@ func (m *model) fields() []field {
 
 func (m *model) fieldCount() int { return len(m.fields()) }
 
-// actionBarIndex is the focus value that selects the action bar.
-func (m *model) actionBarIndex() int { return m.fieldCount() + 1 }
+// resultsIndex is the focus value that selects the results table; it sits
+// between the fields and the action bar. The table is always a focus stop, even
+// before a run has produced any rows.
+func (m *model) resultsIndex() int { return m.fieldCount() + 1 }
 
-// resultsIndex is the focus value that selects the results table; only
-// reachable when hasTable.
-func (m *model) resultsIndex() int { return m.fieldCount() + 2 }
+// actionBarIndex is the focus value that selects the action bar — the last stop.
+func (m *model) actionBarIndex() int { return m.fieldCount() + 2 }
 
-// focusStops is the number of focusable widgets: mode + fields + actions,
-// plus the results table once there is one.
-func (m *model) focusStops() int {
-	stops := m.actionBarIndex() + 1
-	if m.hasTable {
-		stops++
-	}
-	return stops
-}
+// focusStops is the number of focusable widgets: mode + fields + results + actions.
+func (m *model) focusStops() int { return m.actionBarIndex() + 1 }
 
 func (m *model) onMode() bool    { return m.focus == 0 }
 func (m *model) onActions() bool { return m.focus == m.actionBarIndex() }
 func (m *model) onField() bool   { return m.focus >= 1 && m.focus <= m.fieldCount() }
-func (m *model) onResults() bool { return m.hasTable && m.focus == m.resultsIndex() }
+func (m *model) onResults() bool { return m.focus == m.resultsIndex() }
 
 // focusedField returns a pointer to the focused field, or nil.
 func (m *model) focusedField() *field {
@@ -241,14 +239,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Width > 8 {
 			m.progress.Width = min(msg.Width-8, 60)
 		}
-		if m.hasTable {
-			// Re-flow columns and rows for the new size, keeping the user's
-			// page and selected row; the rebuilt table starts blurred, so
-			// re-apply focus if the results pane is the active widget.
-			m.results.reflow(m.tableWidth(), m.resultsTableHeight())
-			if m.onResults() {
-				m.results.focus()
-			}
+		// Re-flow columns and rows for the new size, keeping the user's page and
+		// selected row; the rebuilt table starts blurred, so re-apply focus if
+		// the results pane is the active widget.
+		m.results.reflow(m.tableWidth(), m.resultsTableHeight())
+		if m.onResults() {
+			m.results.focus()
 		}
 		return m, nil
 
@@ -575,7 +571,7 @@ func (m model) startE2E() (tea.Model, tea.Cmd) {
 		m.setStatus("iterations must be a positive integer", statusError)
 		return m, nil
 	}
-	cfg, err := run.ResolveE2E(m.repoRoot,
+	cfg, err := run.ResolveE2E(m.repoRoot, m.settings,
 		m.e2eFields[fTechnique].value(),
 		m.e2eFields[fLanguage].value(),
 		m.e2eFields[fCampaign].value(),
@@ -619,7 +615,7 @@ func (m model) startFuzz() (tea.Model, tea.Cmd) {
 		m.setStatus("trials must be a positive integer", statusError)
 		return m, nil
 	}
-	cfg, err := run.ResolveFuzz(m.repoRoot,
+	cfg, err := run.ResolveFuzz(m.repoRoot, m.settings,
 		m.fuzzFields[fzTechnique].value(),
 		m.fuzzFields[fzLanguage].value(),
 		m.fuzzFields[fzCampaign].value(),
@@ -714,46 +710,24 @@ func (m *model) buildResultsTable() {
 	width := m.tableWidth()
 	height := m.resultsTableHeight()
 	if m.mode == modeFuzz {
-		if len(m.fuzzRows) == 0 {
-			m.hasTable = false
-			m.dropTableFocus()
-			return
-		}
 		m.results = fuzzResults(m.fuzzRows, width, height)
 	} else {
-		if len(m.e2eRows) == 0 {
-			m.hasTable = false
-			m.dropTableFocus()
-			return
-		}
 		m.results = e2eResults(m.e2eRows, width, height)
 	}
-	m.hasTable = true
 	if m.onResults() {
 		m.results.focus()
 	}
 }
 
-// clearResults drops the in-memory results and the table, and pulls focus back
-// if it was on the (now-gone) results pane.
+// clearResults drops the in-memory results and rebuilds the (now empty) table.
+// The results pane stays a focus stop, so focus needs no adjustment.
 func (m *model) clearResults() {
 	m.e2eRows = nil
 	m.fuzzRows = nil
 	m.histogram = nil
 	m.histogramStr = ""
 	m.progressCur, m.progressTot = 0, 0
-	m.hasTable = false
-	m.dropTableFocus()
-}
-
-// dropTableFocus pulls focus back to the action bar when the results pane has
-// just gone away; otherwise focus would point past the last focus stop, leaving
-// no widget active and the key handler inert. Called everywhere hasTable is set
-// false so the focus invariant holds.
-func (m *model) dropTableFocus() {
-	if m.focus >= m.focusStops() {
-		m.focus = m.actionBarIndex()
-	}
+	m.buildResultsTable()
 }
 
 func (m model) startBuild() (tea.Model, tea.Cmd) {
@@ -865,21 +839,6 @@ func parseIntField(s string) (int, bool) {
 		return 0, false
 	}
 	return v, true
-}
-
-func envDefaultInt(name string, def int64) int64 {
-	v, err := config.EnvInt(name, def)
-	if err != nil {
-		return def
-	}
-	return v
-}
-
-func envDefaultString(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
 }
 
 func isCancel(err error) bool {
