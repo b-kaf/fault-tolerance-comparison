@@ -50,7 +50,7 @@ func (c *tuiCmd) Run(e *env) error {
 }
 
 type e2eCmd struct {
-	Technique  string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow" default:"tmr"`
+	Technique  string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow,combined,baseline" default:"tmr"`
 	Language   string `help:"Harness implementation language." enum:"c,zig" required:""`
 	Campaign   string `help:"Campaign name." default:"mixed"`
 	Iterations int    `help:"Iteration count (0 = the config.toml [e2e].iterations default)." default:"0"`
@@ -80,7 +80,7 @@ func (c *e2eCmd) Run(e *env) error {
 }
 
 type fuzzCmd struct {
-	Technique string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow" default:"tmr"`
+	Technique string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow,combined,baseline" default:"tmr"`
 	Language  string `help:"Harness implementation language." enum:"c,zig" required:""`
 	Campaign  string `help:"Campaign name." default:"reg-bitflip"`
 	Trials    int    `help:"Trial count (0 = the config.toml [fuzz].trials default)." default:"0"`

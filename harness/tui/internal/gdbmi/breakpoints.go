@@ -27,6 +27,14 @@ var injectionSymbols = map[string][2]string{
 		"harness_injection_point_before_control_flow",
 		"harness_injection_point_after_control_flow",
 	},
+	"combined": {
+		"harness_injection_point_before_workflow",
+		"harness_injection_point_after_workflow",
+	},
+	"baseline": {
+		"harness_injection_point_before_workflow",
+		"harness_injection_point_after_workflow",
+	},
 }
 
 // InstallBreakpoints installs the inject/observe hardware breakpoints for a

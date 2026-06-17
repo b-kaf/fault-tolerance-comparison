@@ -101,6 +101,36 @@ var controlFlowMixedOrder = []string{
 	"control-early-terminal",
 }
 
+// workflowCampaigns drive both the combined (all techniques) and baseline (no
+// techniques) harnesses with the same injected faults — one representative per
+// technique — so the two images can be compared row-for-row under an identical
+// fault sequence. The fault targets are the existing per-technique IDs; the
+// workflow firmware applies each at its natural phase.
+var workflowCampaigns = map[string]fault{
+	"none":                         {faultNone, 0},
+	"workflow-clean-run":           {faultNone, 0},
+	"workflow-tmr-single":          {faultCopyA, 0xFFFFFFFF},
+	"workflow-tmr-distinct":        {faultAllDistinct, 0xFFFFFFFF},
+	"workflow-checkpoint-value":    {faultActiveValue, 0xFFFFFFFF},
+	"workflow-checkpoint-checksum": {faultActiveChecksum, 0x10},
+	"workflow-recovery-value":      {faultRecoveryPrimaryValue, 0xFFFFFFFF},
+	"workflow-recovery-checksum":   {faultRecoveryPrimaryChecksum, 0x10},
+	"workflow-control-phase":       {faultControlPhase, controlPhaseCommit},
+	"workflow-control-signature":   {faultControlSignature, 0x10},
+}
+
+var workflowMixedOrder = []string{
+	"none",
+	"workflow-tmr-single",
+	"workflow-tmr-distinct",
+	"workflow-checkpoint-value",
+	"workflow-checkpoint-checksum",
+	"workflow-recovery-value",
+	"workflow-recovery-checksum",
+	"workflow-control-phase",
+	"workflow-control-signature",
+}
+
 // These mirror *_SAMPLE_CHOICES / *_CHOICES (used by the validation matrix):
 // the prefixed campaign names in main.py dict-literal order, followed by the
 // mixed alias. Listed explicitly because Go maps have no insertion order.
@@ -131,6 +161,19 @@ var (
 		"control-early-terminal",
 		"control-mixed-faults",
 	}
+	// workflowChoices are shared by the combined and baseline techniques.
+	workflowChoices = []string{
+		"workflow-clean-run",
+		"workflow-tmr-single",
+		"workflow-tmr-distinct",
+		"workflow-checkpoint-value",
+		"workflow-checkpoint-checksum",
+		"workflow-recovery-value",
+		"workflow-recovery-checksum",
+		"workflow-control-phase",
+		"workflow-control-signature",
+		"workflow-mixed-faults",
+	}
 )
 
 // Campaign validation matrix, mirroring resolve_config. Returns "" when the
@@ -139,32 +182,46 @@ func ValidateTechniqueCampaign(technique, campaign string) string {
 	inCheckpoint := slices.Contains(checkpointSampleChoices, campaign)
 	inRecovery := slices.Contains(recoveryBlockChoices, campaign)
 	inControl := slices.Contains(controlFlowChoices, campaign)
+	inWorkflow := slices.Contains(workflowChoices, campaign)
 	isTMROnly := campaign == "single-a" || campaign == "all-distinct"
+
+	const workflowOnly = "workflow-* campaigns require --technique combined or baseline"
 
 	switch technique {
 	case "tmr":
-		if inCheckpoint || inRecovery || inControl {
+		if inCheckpoint || inRecovery || inControl || inWorkflow {
 			return "checkpoint-* campaigns require --technique checkpoint; " +
 				"recovery-* campaigns require --technique recovery-block; " +
-				"control-* campaigns require --technique control-flow"
+				"control-* campaigns require --technique control-flow; " +
+				workflowOnly
 		}
 	case "checkpoint":
-		if isTMROnly || inRecovery || inControl {
+		if isTMROnly || inRecovery || inControl || inWorkflow {
 			return "single-a/all-distinct campaigns require --technique tmr; " +
 				"recovery-* campaigns require --technique recovery-block; " +
-				"control-* campaigns require --technique control-flow"
+				"control-* campaigns require --technique control-flow; " +
+				workflowOnly
 		}
 	case "recovery-block":
-		if isTMROnly || inCheckpoint || inControl {
+		if isTMROnly || inCheckpoint || inControl || inWorkflow {
 			return "single-a/all-distinct campaigns require --technique tmr; " +
 				"checkpoint-* campaigns require --technique checkpoint; " +
-				"control-* campaigns require --technique control-flow"
+				"control-* campaigns require --technique control-flow; " +
+				workflowOnly
 		}
 	case "control-flow":
-		if isTMROnly || inCheckpoint || inRecovery {
+		if isTMROnly || inCheckpoint || inRecovery || inWorkflow {
 			return "single-a/all-distinct campaigns require --technique tmr; " +
 				"checkpoint-* campaigns require --technique checkpoint; " +
-				"recovery-* campaigns require --technique recovery-block"
+				"recovery-* campaigns require --technique recovery-block; " +
+				workflowOnly
+		}
+	case "combined", "baseline":
+		if isTMROnly || inCheckpoint || inRecovery || inControl {
+			return "single-a/all-distinct campaigns require --technique tmr; " +
+				"checkpoint-* campaigns require --technique checkpoint; " +
+				"recovery-* campaigns require --technique recovery-block; " +
+				"control-* campaigns require --technique control-flow"
 		}
 	}
 	return ""
@@ -177,6 +234,7 @@ func CampaignChoices() []string {
 	choices = append(choices, checkpointSampleChoices...)
 	choices = append(choices, recoveryBlockChoices...)
 	choices = append(choices, controlFlowChoices...)
+	choices = append(choices, workflowChoices...)
 	return choices
 }
 
@@ -195,6 +253,8 @@ func CampaignsForTechnique(technique string) []string {
 		return append(base, recoveryBlockChoices...)
 	case "control-flow":
 		return append(base, controlFlowChoices...)
+	case "combined", "baseline":
+		return append(base, workflowChoices...)
 	}
 	return base
 }

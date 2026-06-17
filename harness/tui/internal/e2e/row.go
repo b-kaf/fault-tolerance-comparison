@@ -99,6 +99,52 @@ func recoveryBlockRow(gdb *gdbmi.Client, campaign, implementation string, iterat
 	return row, r.err
 }
 
+func combinedRow(gdb *gdbmi.Client, campaign, implementation string, iteration uint32, f fault) (result.Row, error) {
+	r := reader{gdb: gdb}
+	row := result.Row{
+		"technique":        "combined",
+		"implementation":   implementation,
+		"campaign":         campaign,
+		"iteration":        iteration,
+		"stage":            r.u32("harness_stage"),
+		"fault_target":     r.u32("harness_last_fault_target"),
+		"fault_value":      f.value,
+		"expected":         r.u32("harness_last_expected"),
+		"value":            r.u32("harness_last_value"),
+		"outcome":          r.u32("harness_last_outcome"),
+		"tmr_status":       r.u32("harness_last_tmr_status"),
+		"recovery_status":  r.u32("harness_last_recovery_status"),
+		"restart_status":   r.u32("harness_last_restart_status"),
+		"control_status":   r.u32("harness_last_control_status"),
+		"active_check":     r.u32("harness_last_active_check"),
+		"checkpoint_check": r.u32("harness_last_checkpoint_check"),
+		"phase":            r.u32("harness_last_phase"),
+		"transitions":      r.u32("harness_last_transitions"),
+		"passes":           r.u32("harness_passes"),
+		"failures":         r.u32("harness_failures"),
+	}
+	return row, r.err
+}
+
+func baselineRow(gdb *gdbmi.Client, campaign, implementation string, iteration uint32, f fault) (result.Row, error) {
+	r := reader{gdb: gdb}
+	row := result.Row{
+		"technique":      "baseline",
+		"implementation": implementation,
+		"campaign":       campaign,
+		"iteration":      iteration,
+		"stage":          r.u32("harness_stage"),
+		"fault_target":   r.u32("harness_last_fault_target"),
+		"fault_value":    f.value,
+		"expected":       r.u32("harness_last_expected"),
+		"value":          r.u32("harness_last_value"),
+		"outcome":        r.u32("harness_last_outcome"),
+		"passes":         r.u32("harness_passes"),
+		"failures":       r.u32("harness_failures"),
+	}
+	return row, r.err
+}
+
 func controlFlowRow(gdb *gdbmi.Client, campaign, implementation string, iteration uint32, f fault) (result.Row, error) {
 	r := reader{gdb: gdb}
 	row := result.Row{

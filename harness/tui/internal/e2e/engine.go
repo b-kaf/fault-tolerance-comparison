@@ -134,6 +134,10 @@ func runIteration(ctx context.Context, client *gdbmi.Client, cfg config.E2E, bp 
 		return recoveryBlockRow(client, cfg.Campaign, cfg.Language, iteration, chosen)
 	case "control-flow":
 		return controlFlowRow(client, cfg.Campaign, cfg.Language, iteration, chosen)
+	case "combined":
+		return combinedRow(client, cfg.Campaign, cfg.Language, iteration, chosen)
+	case "baseline":
+		return baselineRow(client, cfg.Campaign, cfg.Language, iteration, chosen)
 	default:
 		return tmrRow(client, cfg.Campaign, cfg.Language, iteration, expected, chosen)
 	}
@@ -147,6 +151,8 @@ func chooseFault(technique, campaign string, iteration uint32) fault {
 		return chooseRecoveryBlockFault(campaign, iteration)
 	case "control-flow":
 		return chooseControlFlowFault(campaign, iteration)
+	case "combined", "baseline":
+		return chooseWorkflowFault(campaign, iteration)
 	default:
 		return fault{}
 	}

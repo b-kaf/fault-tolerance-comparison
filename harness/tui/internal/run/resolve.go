@@ -18,7 +18,7 @@ import (
 // Techniques and Languages are the accepted enum values, exposed so the TUI
 // can populate its selects.
 var (
-	Techniques = []string{"tmr", "checkpoint", "recovery-block", "control-flow"}
+	Techniques = []string{"tmr", "checkpoint", "recovery-block", "control-flow", "combined", "baseline"}
 	Languages  = []string{"c", "zig"}
 )
 

@@ -33,3 +33,14 @@ func chooseControlFlowFault(campaign string, iteration uint32) fault {
 	key := controlFlowMixedOrder[(iteration-1)%uint32(len(controlFlowMixedOrder))]
 	return controlFlowCampaigns[key]
 }
+
+// chooseWorkflowFault serves both the combined and baseline techniques: they
+// run the same workflow campaigns so the two images face an identical fault
+// sequence.
+func chooseWorkflowFault(campaign string, iteration uint32) fault {
+	if entry, ok := workflowCampaigns[campaign]; ok {
+		return entry
+	}
+	key := workflowMixedOrder[(iteration-1)%uint32(len(workflowMixedOrder))]
+	return workflowCampaigns[key]
+}

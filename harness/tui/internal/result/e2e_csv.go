@@ -74,6 +74,33 @@ var e2eTechniqueFields = map[string][]string{
 		"signature",
 		"transitions",
 	},
+	"combined": {
+		"outcome",
+		"outcome_name",
+		"expected",
+		"value",
+		"tmr_status",
+		"tmr_status_name",
+		"recovery_status",
+		"recovery_status_name",
+		"restart_status",
+		"restart_status_name",
+		"control_status",
+		"control_status_name",
+		"active_check",
+		"active_check_name",
+		"checkpoint_check",
+		"checkpoint_check_name",
+		"phase",
+		"phase_name",
+		"transitions",
+	},
+	"baseline": {
+		"outcome",
+		"outcome_name",
+		"expected",
+		"value",
+	},
 }
 
 var e2eCounterFields = []string{
@@ -176,6 +203,8 @@ func addStatusLabels(row Row, technique string) {
 		addLabel(row, "status", "status_name", tmrStatusNames)
 	}
 
+	addLabel(row, "outcome", "outcome_name", outcomeNames)
+	addLabel(row, "tmr_status", "tmr_status_name", tmrStatusNames)
 	addLabel(row, "restart_status", "restart_status_name", restartStatusNames)
 	addLabel(row, "recovery_status", "recovery_status_name", recoveryStatusNames)
 	addLabel(row, "control_status", "control_status_name", controlStatusNames)

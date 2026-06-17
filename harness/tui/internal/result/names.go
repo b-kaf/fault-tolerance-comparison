@@ -19,6 +19,8 @@ var stageNames = map[int64]string{
 	13: "after_control_read",
 	14: "after_control_compute",
 	15: "after_control_flow",
+	16: "before_workflow",
+	17: "after_workflow",
 }
 
 var faultNames = map[int64]string{
@@ -85,4 +87,11 @@ var phaseNames = map[int64]string{
 	3: "validate",
 	4: "commit",
 	5: "done",
+}
+
+var outcomeNames = map[int64]string{
+	0: "correct",
+	1: "recovered",
+	2: "safe_stop",
+	3: "sdc",
 }
