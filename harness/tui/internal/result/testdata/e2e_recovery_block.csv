@@ -1,4 +1,0 @@
-technique,implementation,campaign,iteration,result,pass_delta,failure_delta,stage,stage_name,fault_target,fault_name,fault_value,initial_value,expected,value,recovery_status,recovery_status_name,checkpoint_check,checkpoint_check_name,primary_check,primary_check_name,restore_check,restore_check_name,alternate_check,alternate_check_name,active_value,checkpoint_value,passes,failures
-recovery-block,zig,recovery-mixed-faults,1,pass,1,0,11,after_recovery,0,none,0,100,110,110,0,primary_accepted,0,ok,0,ok,0,ok,0,ok,110,100,1,0
-recovery-block,zig,recovery-mixed-faults,2,pass,1,0,11,after_recovery,20,recovery_primary_value,4294967295,110,120,120,1,alternate_accepted,0,ok,2,above_max,0,ok,0,ok,120,110,2,0
-recovery-block,zig,recovery-mixed-faults,3,fail,0,1,11,after_recovery,23,recovery_primary_value_and_checkpoint_checksum,4294967295,120,130,120,4,restore_failed,4,invalid_checksum,2,above_max,4,invalid_checksum,0,ok,4294967295,120,2,1

@@ -1,4 +1,0 @@
-technique,implementation,trial_id,trial_seed,campaign,campaign_seed,result_class,output,expected,detected,corrected,safe_state,error_code,harness_done,injected,fault_mode,fault_domain,target_kind,target_name,target_addr,inject_pc,inject_offset,bit,before,after,process_status,timeout,instruction_budget_exhausted,elapsed_ms,instructions_executed,qemu_plugin_api
-tmr,zig,0,0x123456789abcdef0,reg-bitflip,0x00000000c0dec0ce,corrected,0x12345678,0x12345678,1,1,0,0,1,1,reg-bitflip,register,register,r3,,0x1f4,1234,17,0x0,0x20000,completed,0,,143,56789,2
-tmr,zig,1,0x0123456789abcdef,reg-bitflip,0x00000000c0dec0ce,hang,,,,,,,,,,,,,,,,,,,timeout,1,1,5002,,
-checkpoint,c,2,0x9e3779b97f4a7c15,none,0x0000000000000000,passed,0x6e,0x6e,0,0,0,0,1,0,,,,,,,,,,,completed,0,,87,,

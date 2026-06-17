@@ -1,4 +1,0 @@
-technique,implementation,campaign,iteration,result,pass_delta,failure_delta,stage,stage_name,fault_target,fault_name,fault_value,expected,value,control_status,control_status_name,terminal_status,terminal_status_name,phase,phase_name,signature,transitions,passes,failures
-control-flow,c,control-mixed-faults,1,pass,1,0,15,after_control_flow,0,none,0,42,42,0,ok,0,ok,5,done,305419896,5,1,0
-control-flow,c,control-mixed-faults,2,fail,0,1,15,after_control_flow,30,control_phase,4,42,0,1,invalid_transition,0,ok,4,commit,16,3,1,1
-control-flow,c,control-mixed-faults,3,fail,0,1,15,after_control_flow,31,control_signature,16,42,0,2,bad_signature,3,unexpected_terminal,4,commit,16,4,1,2

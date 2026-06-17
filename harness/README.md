@@ -11,6 +11,10 @@ This harness builds bare-metal Cortex-M4 firmware images for QEMU's
 - `recovery-block-harness-zig-m4.elf` exercises `zig/recovery_block/recovery_block.zig`.
 - `control-flow-harness-c-m4.elf` exercises `c/control_flow/control_flow.h`.
 - `control-flow-harness-zig-m4.elf` exercises `zig/control_flow/control_flow.zig`.
+- `combined-harness-c-m4.elf` / `combined-harness-zig-m4.elf` exercise a single
+  workflow that chains **all** techniques.
+- `baseline-harness-c-m4.elf` / `baseline-harness-zig-m4.elf` run the **same**
+  workflow with **no** fault tolerance.
 
 Both are cross-compiled by Zig through `build.zig`. Shared startup, linker, and
 ABI definitions live in `harness/common`; implementation-specific loop harnesses
@@ -63,11 +67,19 @@ harness-tui e2e \
   --language c \
   --campaign control-mixed-faults \
   --iterations 20
+
+harness-tui e2e --technique combined --language zig --iterations 9
+
+harness-tui e2e --technique baseline --language c --iterations 9
 ```
 
 `--technique` defaults to `tmr`, `--campaign` to `mixed` (the `mixed` and `none`
 campaigns apply to every technique; each technique also has its own
-`<technique>-mixed-faults` and clean-run campaigns). The headless `e2e` command
+`<technique>-mixed-faults` and clean-run campaigns). The `combined` and
+`baseline` techniques share the `workflow-*` campaigns (see below). Run the same
+campaign against both to compare them row-for-row: under `mixed`, `combined`
+masks, recovers, or fail-safes every fault (zero failures) while `baseline`
+commits a wrong value for each (silent data corruption). The headless `e2e` command
 exits `0` on a clean run, `1` if the campaign completes with a non-zero failure
 counter, and `2` on a usage or run error.
 
@@ -97,6 +109,8 @@ subcommand runs it headlessly:
 harness-tui fuzz --technique tmr --language c
 harness-tui fuzz --technique tmr --language zig --campaign reg-bitflip --trials 100 --seed 0x1234
 harness-tui fuzz --technique checkpoint --language c --campaign ram-bitflip --trials 100 --seed 0x1234
+harness-tui fuzz --technique combined --language zig --campaign ram-bitflip --trials 150
+harness-tui fuzz --technique baseline --language zig --campaign ram-bitflip --trials 150
 ```
 
 The campaigns are `none`, `ram-bitflip`, and `reg-bitflip` (the default).
@@ -264,3 +278,63 @@ Control-flow fault targets:
 - `32`: skip compute transition
 - `33`: repeat read transition
 - `34`: finish before reaching `done`
+
+The combined and baseline harness images run one workflow whose phases map onto
+the techniques:
+
+| Phase | `combined` (all techniques) | `baseline` (none) |
+| --- | --- | --- |
+| read_input | TMR triplet, majority vote | plain read |
+| compute | recovery block (primary → acceptance test → alternate) | single compute |
+| validate | checker acceptance gate | (none) |
+| commit | checkpoint commit-or-restart | plain assignment |
+| whole run | control-flow signature monitor wraps every transition | (none) |
+
+Both images share the workload (so `harness_last_expected` matches) and a single
+inject point. Each iteration:
+
+1. Initializes the workflow state (and, for `combined`, the TMR triplet,
+   checkpoint record, and control-flow monitor).
+2. Calls `harness_injection_point_before_workflow`.
+3. Runs the workflow, applying any requested fault at its natural phase (the
+   `combined` image reuses the existing per-technique fault targets above; the
+   `baseline` image applies each to its plain equivalent).
+4. Classifies the result into `harness_last_outcome`, validates it, and updates
+   counters.
+5. Calls `harness_injection_point_after_workflow`.
+
+A pass means the workflow avoided silent data corruption: it committed the
+correct output, recovered it, or stopped fail-safe. `baseline` therefore fails
+every fault it is given — that contrast is the point.
+
+Stable symbols exposed by both workflow images:
+
+- `harness_injection_point_before_workflow`
+- `harness_injection_point_after_workflow`
+- `harness_last_outcome`
+
+The `combined` image additionally exposes the per-technique sub-status symbols
+already used by the standalone harnesses: `harness_last_tmr_status`,
+`harness_last_recovery_status`, `harness_last_restart_status`,
+`harness_last_control_status`, `harness_last_active_check`,
+`harness_last_checkpoint_check`, `harness_last_phase`, and
+`harness_last_transitions`.
+
+Workflow stages:
+
+- `16`: before workflow
+- `17`: after workflow
+
+Workflow outcomes (`harness_last_outcome`):
+
+- `0`: correct (committed the expected output, no fault acted)
+- `1`: recovered (a fault was masked or corrected; output still correct)
+- `2`: safe_stop (a fault was detected and the workflow halted before commit)
+- `3`: sdc (silent data corruption — a wrong value was committed)
+
+The combined/baseline `workflow-*` campaigns inject one representative fault per
+technique (`workflow-tmr-single`, `workflow-tmr-distinct`,
+`workflow-checkpoint-value`, `workflow-checkpoint-checksum`,
+`workflow-recovery-value`, `workflow-recovery-checksum`, `workflow-control-phase`,
+`workflow-control-signature`), plus `workflow-clean-run` and the `mixed`/`none`
+defaults.
