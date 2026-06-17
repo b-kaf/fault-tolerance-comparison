@@ -18,6 +18,7 @@ typedef enum {
   MODE_NONE,
   MODE_RAM_SYMBOL_BITFLIP,
   MODE_REG_BITFLIP_WINDOW,
+  MODE_INSN_SKIP,
 } FaultMode;
 
 typedef struct {
@@ -78,9 +79,11 @@ typedef struct {
   uint64_t instructions_executed;
   uint64_t window_insns_seen;
   uint64_t reg_inject_after;
+  uint64_t insn_skip_after;
   size_t selected_reg;
   RegisterHandle regs[MAX_REGS];
   size_t reg_count;
+  struct qemu_plugin_register *pc_handle;
   FaultRecord fault;
 } PluginState;
 
@@ -231,6 +234,9 @@ static FaultMode parse_mode(const char *value) {
   if (strcmp(value, "reg-bitflip") == 0) {
     return MODE_REG_BITFLIP_WINDOW;
   }
+  if (strcmp(value, "insn-skip") == 0) {
+    return MODE_INSN_SKIP;
+  }
   return MODE_NONE;
 }
 
@@ -242,6 +248,8 @@ static const char *mode_name(FaultMode mode) {
     return "ram-bitflip";
   case MODE_REG_BITFLIP_WINDOW:
     return "reg-bitflip";
+  case MODE_INSN_SKIP:
+    return "insn-skip";
   }
   return "unknown";
 }
@@ -296,10 +304,10 @@ static void inject_ram_symbol_fault(uint64_t pc) {
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "ram-symbol");
 }
 
-static bool read_register_u32(size_t index, uint32_t *out,
-                              GByteArray **out_bytes) {
+static bool read_register_u32(struct qemu_plugin_register *handle,
+                              uint32_t *out, GByteArray **out_bytes) {
   GByteArray *bytes = g_byte_array_sized_new(sizeof(uint32_t));
-  int len = qemu_plugin_read_register(g.regs[index].handle, bytes);
+  int len = qemu_plugin_read_register(handle, bytes);
   if (len < (int)sizeof(uint32_t) || bytes->len < sizeof(uint32_t)) {
     g_byte_array_unref(bytes);
     return false;
@@ -312,13 +320,13 @@ static bool read_register_u32(size_t index, uint32_t *out,
   return true;
 }
 
-static bool write_register_u32(size_t index, GByteArray *bytes,
-                               uint32_t value) {
+static bool write_register_u32(struct qemu_plugin_register *handle,
+                               GByteArray *bytes, uint32_t value) {
   bytes->data[0] = (uint8_t)(value & 0xffu);
   bytes->data[1] = (uint8_t)((value >> 8) & 0xffu);
   bytes->data[2] = (uint8_t)((value >> 16) & 0xffu);
   bytes->data[3] = (uint8_t)((value >> 24) & 0xffu);
-  return qemu_plugin_write_register(g.regs[index].handle, bytes) > 0;
+  return qemu_plugin_write_register(handle, bytes) > 0;
 }
 
 static void prepare_register_fault(void) {
@@ -348,14 +356,14 @@ static void maybe_inject_register_fault(uint64_t pc) {
 
   uint32_t before = 0;
   GByteArray *bytes = NULL;
-  if (!read_register_u32(g.selected_reg, &before, &bytes)) {
+  if (!read_register_u32(g.regs[g.selected_reg].handle, &before, &bytes)) {
     copy_str(g.fault.target_kind, sizeof(g.fault.target_kind),
              "reg-read-failed");
     return;
   }
 
   uint32_t after = before ^ (UINT32_C(1) << g.fault.bit);
-  bool ok = write_register_u32(g.selected_reg, bytes, after);
+  bool ok = write_register_u32(g.regs[g.selected_reg].handle, bytes, after);
   g_byte_array_unref(bytes);
 
   g.fault.inject_pc = pc;
@@ -373,6 +381,57 @@ static void maybe_inject_register_fault(uint64_t pc) {
 
   g.fault.injected = true;
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg");
+}
+
+static void prepare_insn_skip(void) {
+  if (g.pc_handle == NULL) {
+    copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "no-pc-handle");
+    return;
+  }
+  g.window_insns_seen = 0;
+  g.insn_skip_after = 1 + rng_bounded(8);
+  copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "insn-skip-pending");
+  copy_str(g.fault.target_name, sizeof(g.fault.target_name), "pc");
+}
+
+static void maybe_inject_insn_skip(uint64_t pc, uint64_t size) {
+  if (!g.active_window || g.mode != MODE_INSN_SKIP || g.fault.injected ||
+      g.pc_handle == NULL) {
+    return;
+  }
+
+  g.window_insns_seen += 1;
+  if (g.window_insns_seen < g.insn_skip_after) {
+    return;
+  }
+
+  uint32_t before = 0;
+  GByteArray *bytes = NULL;
+  if (!read_register_u32(g.pc_handle, &before, &bytes)) {
+    copy_str(g.fault.target_kind, sizeof(g.fault.target_kind),
+             "pc-read-failed");
+    return;
+  }
+
+  uint32_t after = (uint32_t)(pc + size);
+  bool ok = write_register_u32(g.pc_handle, bytes, after);
+  g_byte_array_unref(bytes);
+
+  g.fault.inject_pc = pc;
+  g.fault.inject_offset = g.window_insns_seen;
+  g.fault.target_addr = pc + size;
+  g.fault.before = before;
+  g.fault.after = after;
+  copy_str(g.fault.target_name, sizeof(g.fault.target_name), "pc");
+
+  if (!ok) {
+    copy_str(g.fault.target_kind, sizeof(g.fault.target_kind),
+             "pc-write-failed");
+    return;
+  }
+
+  g.fault.injected = true;
+  copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "insn-skip");
 }
 
 static void write_raw_result(const char *plugin_status) {
@@ -453,7 +512,7 @@ static void ensure_seed_written(uint64_t pc) {
   g.seed_written = true;
 }
 
-static void handle_fault_window(uint64_t pc) {
+static void handle_fault_window(uint64_t pc, uint64_t size) {
   uint32_t open = read_symbol_u32_or_zero("harness_fault_window_open");
 
   if (open != 0u && !g.active_window) {
@@ -468,11 +527,15 @@ static void handle_fault_window(uint64_t pc) {
     case MODE_REG_BITFLIP_WINDOW:
       prepare_register_fault();
       break;
+    case MODE_INSN_SKIP:
+      prepare_insn_skip();
+      break;
     }
   }
 
   if (open != 0u) {
     maybe_inject_register_fault(pc);
+    maybe_inject_insn_skip(pc, size);
   } else {
     g.active_window = false;
   }
@@ -480,7 +543,9 @@ static void handle_fault_window(uint64_t pc) {
 
 static void on_instruction(unsigned int vcpu_index, void *userdata) {
   (void)vcpu_index;
-  uint64_t pc = (uint64_t)(uintptr_t)userdata;
+  uint64_t packed = (uint64_t)(uintptr_t)userdata;
+  uint64_t pc = packed >> 3;
+  uint64_t size = (packed & 1u) ? 4u : 2u;
 
   if (g.done) {
     return;
@@ -497,7 +562,7 @@ static void on_instruction(unsigned int vcpu_index, void *userdata) {
     return;
   }
 
-  handle_fault_window(pc);
+  handle_fault_window(pc, size);
 
   if (read_symbol_u32_or_zero("harness_done") != 0u) {
     write_raw_result("completed");
@@ -514,11 +579,14 @@ static void on_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
     if (pc < g.config.text_start || pc >= g.config.text_end) {
       continue;
     }
-    qemu_plugin_register_vcpu_insn_exec_cb(insn, on_instruction,
-                                           g.mode == MODE_REG_BITFLIP_WINDOW
-                                               ? QEMU_PLUGIN_CB_RW_REGS
-                                               : QEMU_PLUGIN_CB_NO_REGS,
-                                           (void *)(uintptr_t)pc);
+    size_t size = qemu_plugin_insn_size(insn);
+    uint64_t packed = (pc << 3) | (size == 4 ? 1u : 0u);
+    enum qemu_plugin_cb_flags flags =
+        (g.mode == MODE_REG_BITFLIP_WINDOW || g.mode == MODE_INSN_SKIP)
+            ? QEMU_PLUGIN_CB_RW_REGS
+            : QEMU_PLUGIN_CB_NO_REGS;
+    qemu_plugin_register_vcpu_insn_exec_cb(insn, on_instruction, flags,
+                                           (void *)(uintptr_t)packed);
   }
 }
 
@@ -549,6 +617,9 @@ static void on_vcpu_init(qemu_plugin_id_t id, unsigned int vcpu_index) {
         &g_array_index(registers, qemu_plugin_reg_descriptor, i);
     if (desc->name == NULL || desc->handle == NULL) {
       continue;
+    }
+    if (g.pc_handle == NULL && strcmp(desc->name, "pc") == 0) {
+      g.pc_handle = desc->handle;
     }
     if (!is_general_arm_reg(desc->name)) {
       continue;
