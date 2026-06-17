@@ -20,6 +20,8 @@ enum {
     HARNESS_STAGE_AFTER_CONTROL_READ = 13,
     HARNESS_STAGE_AFTER_CONTROL_COMPUTE = 14,
     HARNESS_STAGE_AFTER_CONTROL_FLOW = 15,
+    HARNESS_STAGE_BEFORE_WORKFLOW = 16,
+    HARNESS_STAGE_AFTER_WORKFLOW = 17,
 };
 
 enum {
@@ -67,6 +69,17 @@ enum {
     HARNESS_CONTROL_INVALID_TRANSITION = 1,
     HARNESS_CONTROL_BAD_SIGNATURE = 2,
     HARNESS_CONTROL_UNEXPECTED_TERMINAL = 3,
+};
+
+/* Workflow outcome, used by the combined/baseline harnesses. A pass is any
+ * outcome other than CORRECT-but-wrong: the correct committed output, a
+ * recovered value, or a safe detected stop. SDC means a wrong value was
+ * committed without detection. */
+enum {
+    HARNESS_OUTCOME_CORRECT = 0,
+    HARNESS_OUTCOME_RECOVERED = 1,
+    HARNESS_OUTCOME_SAFE_STOP = 2,
+    HARNESS_OUTCOME_SDC = 3,
 };
 
 #endif

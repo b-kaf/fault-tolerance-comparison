@@ -18,6 +18,8 @@ pub const stage = struct {
     pub const after_control_read: u32 = 13;
     pub const after_control_compute: u32 = 14;
     pub const after_control_flow: u32 = 15;
+    pub const before_workflow: u32 = 16;
+    pub const after_workflow: u32 = 17;
 };
 
 pub const fault = struct {
@@ -65,4 +67,13 @@ pub const control = struct {
     pub const invalid_transition: u32 = 1;
     pub const bad_signature: u32 = 2;
     pub const unexpected_terminal: u32 = 3;
+};
+
+/// Workflow outcome, used by the combined/baseline harnesses. See the
+/// HARNESS_OUTCOME_* enum in harness_abi.h.
+pub const outcome = struct {
+    pub const correct: u32 = 0;
+    pub const recovered: u32 = 1;
+    pub const safe_stop: u32 = 2;
+    pub const sdc: u32 = 3;
 };
