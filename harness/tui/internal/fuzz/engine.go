@@ -16,7 +16,7 @@ import (
 )
 
 // Events carries optional engine callbacks for the TUI; all fields may be
-// nil. OnTrial fires after each trial's row has been written to the CSV.
+// nil. OnTrial fires after each trial's row has been collected.
 type Events struct {
 	OnTrial func(trialID, total int, row map[string]string)
 }
@@ -55,52 +55,49 @@ func FormatCounts(counts map[string]int, sep string) string {
 }
 
 // Run mirrors main.run: load symbols, then drive one QEMU trial per seed,
-// streaming rows to the CSV. Cancelling ctx stops between (or mid) trial;
-// rows already written stay written.
-func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events) (Summary, error) {
+// collecting the per-trial rows in memory and returning them. Persisting the
+// rows to CSV is the caller's choice (the headless CLI writes them, the TUI
+// exports on demand). Cancelling ctx stops between (or mid) trial; the rows
+// gathered so far are returned alongside ctx.Err().
+func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events) (Summary, []map[string]string, error) {
 	summary := Summary{Counts: make(map[string]int)}
+	var rows []map[string]string
 
 	spec, err := CampaignByName(cfg.Campaign)
 	if err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 
 	symbols, err := harnesself.Load(cfg.Elf)
 	if err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 	if err := harnesself.RequireTrialABI(symbols); err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 
 	abiSymbols := harnesself.SelectedABISymbols(symbols)
 	fuzzSymbols := harnesself.SelectedFuzzSymbols(symbols)
 	if spec.RequiresFuzzSymbols && len(fuzzSymbols) == 0 {
-		return summary, fmt.Errorf("campaign %q has no harness_fuzz_* symbols for %s/%s",
+		return summary, nil, fmt.Errorf("campaign %q has no harness_fuzz_* symbols for %s/%s",
 			cfg.Campaign, cfg.Technique, cfg.Language)
 	}
 
 	textStart, textEnd, err := harnesself.TextRange(symbols)
 	if err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 	entryPC := symbols["harness_main"].Address
 
-	writer, err := result.OpenFuzzCSV(cfg.CSV)
-	if err != nil {
-		return summary, err
-	}
-	defer writer.Close()
-
 	tmpDir, err := os.MkdirTemp("", "qemu-ft-fuzz-")
 	if err != nil {
-		return summary, err
+		return summary, nil, err
 	}
 	defer os.RemoveAll(tmpDir)
 
 	for trialID := 0; trialID < cfg.Trials; trialID++ {
 		if ctx.Err() != nil {
-			return summary, ctx.Err()
+			return summary, rows, ctx.Err()
 		}
 		trialSeed := DeriveTrialSeed(cfg.Seed, trialID, cfg.Technique, cfg.Language, cfg.Campaign)
 		row, err := runOneTrial(ctx, cfg, spec, trialParams{
@@ -114,18 +111,16 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 			trialSeed:   trialSeed,
 		}, warnings)
 		if err != nil {
-			return summary, err
+			return summary, rows, err
 		}
 		summary.Counts[row["result_class"]]++
 		summary.Trials++
-		if err := writer.WriteRow(row); err != nil {
-			return summary, err
-		}
+		rows = append(rows, row)
 		if events.OnTrial != nil {
 			events.OnTrial(trialID, cfg.Trials, row)
 		}
 	}
-	return summary, nil
+	return summary, rows, nil
 }
 
 type trialParams struct {

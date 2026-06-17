@@ -20,13 +20,20 @@ func (m model) View() string {
 	b.WriteString("\n")
 	b.WriteString(m.actionsBar())
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(helpForFocus(m.focusHint())))
+	// The Export prompt takes over the bottom line (replacing the help hint) so
+	// it consumes no extra vertical space and the results table need not reflow.
+	if m.exporting {
+		b.WriteString(labelStyle.Render("export to ") + m.exportInput.View() +
+			"  " + mutedStyle.Render("(enter: write · esc: cancel)"))
+	} else {
+		b.WriteString(mutedStyle.Render(helpForFocus(m.focusHint())))
+	}
 	return b.String()
 }
 
 // topPanes places the Mode and Configuration panes side by side. Mode keeps its
 // natural width; Configuration gets the rest of the terminal (capped so a long
-// CSV path can't overflow), and the shorter box is padded to the taller's
+// field value can't overflow), and the shorter box is padded to the taller's
 // height so the two align at the bottom.
 func (m model) topPanes() string {
 	mode := m.modePane(0)
@@ -76,7 +83,7 @@ func (m model) modePane(height int) string {
 
 // configPane renders the Configuration fields. A height > 0 pads the box (see
 // modePane). A maxWidth > 0 caps the box to that total width, truncating a long
-// CSV path rather than letting it push the side-by-side layout off-screen;
+// field value rather than letting it push the side-by-side layout off-screen;
 // shorter content keeps its natural width.
 func (m model) configPane(height, maxWidth int) string {
 	fields := m.fields()
@@ -132,7 +139,10 @@ func (m model) actionEnabled(a action) bool {
 		return m.state == stateIdle
 	case actStop:
 		return m.state != stateIdle
-	case actExport, actClear:
+	case actExport:
+		// Export opens a modal prompt, so only allow it when idle.
+		return m.state == stateIdle && m.resultCount() > 0
+	case actClear:
 		return m.resultCount() > 0
 	case actQuit:
 		return true

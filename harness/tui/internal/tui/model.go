@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -45,13 +46,14 @@ const (
 	stateBuilding
 )
 
-// e2e field indices (also the display order).
+// e2e field indices (also the display order). The CSV path is no longer a
+// config field: results are kept in memory and written only via the on-demand
+// Export prompt.
 const (
 	fTechnique = iota
 	fLanguage
 	fCampaign
 	fIterations
-	fE2ECSV
 	e2eFieldCount
 )
 
@@ -62,7 +64,6 @@ const (
 	fzCampaign
 	fzTrials
 	fzSeed
-	fzCSV
 	fuzzFieldCount
 )
 
@@ -94,14 +95,15 @@ type model struct {
 
 	e2eFields  []field
 	fuzzFields []field
-	// CSV-path edits are tracked per mode: hand-editing one mode's path must
-	// not freeze the other mode's auto-naming, which would leave it empty and
-	// silently route that run's CSV to stdout (corrupting the alt-screen TUI).
-	e2eCSVEdited  bool
-	fuzzCSVEdited bool
 
 	focus        int // 0 = mode toggle, 1..n = fields, n+1 = action bar
 	actionCursor action
+
+	// exporting drives the on-demand Export prompt: while true, exportInput
+	// holds the (editable, auto-filled) CSV path and captures key input until
+	// the user confirms (enter) or cancels (esc).
+	exporting   bool
+	exportInput textinput.Model
 
 	state  runState
 	cancel context.CancelFunc
@@ -174,7 +176,6 @@ func newModel(repoRoot string) model {
 		fLanguage:   newSelect("Language", run.Languages, defaultLanguage),
 		fCampaign:   newSelect("Campaign", e2e.CampaignsForTechnique(defaultTechnique), "mixed"),
 		fIterations: newText("Iterations", fmt.Sprintf("%d", iterDefault)),
-		fE2ECSV:     newText("CSV path", ""),
 	}
 	m.fuzzFields = []field{
 		fzTechnique: newSelect("Technique", run.Techniques, defaultTechnique),
@@ -182,10 +183,8 @@ func newModel(repoRoot string) model {
 		fzCampaign:  newSelect("Campaign", fuzz.CampaignChoices, "reg-bitflip"),
 		fzTrials:    newText("Trials", fmt.Sprintf("%d", trialsDefault)),
 		fzSeed:      newText("Seed", seedDefault),
-		fzCSV:       newText("CSV path", ""),
 	}
 
-	m.regenerateCSV()
 	return m
 }
 
@@ -301,7 +300,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.quit = true
 		return m, tea.Quit
+	}
 
+	// While the Export prompt is open it owns the keyboard (except ctrl+c above).
+	if m.exporting {
+		return m.handleExportKey(msg)
+	}
+
+	switch msg.String() {
 	case "esc":
 		if m.state != stateIdle && m.cancel != nil {
 			m.cancel()
@@ -375,7 +381,6 @@ func (m model) handleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearResults()
 		m.focus = 0
 		m.actionCursor = actStart // don't leave the cursor on a now-disabled action
-		m.regenerateCSV()
 		m.setStatus("", statusInfo)
 	}
 	return m, nil
@@ -397,46 +402,15 @@ func (m model) handleFieldKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default: // textKind
 		var cmd tea.Cmd
 		f.input, cmd = f.input.Update(msg)
-		if m.isCSVField() {
-			m.setCSVEdited()
-		}
 		return m, cmd
 	}
 }
 
-// onSelectChanged reloads campaign choices when technique changes and
-// regenerates the auto CSV name.
+// onSelectChanged reloads campaign choices when the technique changes.
 func (m *model) onSelectChanged() {
 	if m.mode == modeE2E {
 		technique := m.e2eFields[fTechnique].value()
 		m.e2eFields[fCampaign].setOptions(e2e.CampaignsForTechnique(technique))
-	}
-	m.regenerateCSV()
-}
-
-func (m *model) isCSVField() bool {
-	if m.mode == modeE2E {
-		return m.focus-1 == fE2ECSV
-	}
-	return m.focus-1 == fzCSV
-}
-
-// csvEdited reports whether the active mode's CSV path has been hand-edited.
-// Each mode tracks this separately so editing one does not freeze the other's
-// auto-naming.
-func (m *model) csvEdited() bool {
-	if m.mode == modeFuzz {
-		return m.fuzzCSVEdited
-	}
-	return m.e2eCSVEdited
-}
-
-// setCSVEdited marks the active mode's CSV path as hand-edited.
-func (m *model) setCSVEdited() {
-	if m.mode == modeFuzz {
-		m.fuzzCSVEdited = true
-	} else {
-		m.e2eCSVEdited = true
 	}
 }
 
@@ -467,7 +441,7 @@ func (m model) activate(a action) (tea.Model, tea.Cmd) {
 	case actRebuild:
 		return m.startBuild()
 	case actExport:
-		return m.exportResults()
+		return m.beginExport()
 	case actClear:
 		m.clearResults()
 		m.setStatus("cleared results", statusInfo)
@@ -501,25 +475,21 @@ func (m *model) focusCmd() tea.Cmd {
 	return nil
 }
 
-// regenerateCSV recomputes the auto CSV path unless the user has edited it.
-func (m *model) regenerateCSV() {
-	if m.csvEdited() {
-		return
-	}
-	// Use each layout's own field constants rather than assuming the two
-	// layouts share positions 0/1/2 — reordering either must not silently pick
-	// the wrong field.
+// defaultExportPath is the auto-named CSV path proposed when the Export prompt
+// opens, derived from the active mode's current selections. Each layout uses
+// its own field constants rather than assuming the two share positions, so
+// reordering either can't silently pick the wrong field.
+func (m *model) defaultExportPath() string {
 	fields := m.e2eFields
-	techIdx, langIdx, campIdx, csvIdx := fTechnique, fLanguage, fCampaign, fE2ECSV
+	techIdx, langIdx, campIdx := fTechnique, fLanguage, fCampaign
 	if m.mode == modeFuzz {
 		fields = m.fuzzFields
-		techIdx, langIdx, campIdx, csvIdx = fzTechnique, fzLanguage, fzCampaign, fzCSV
+		techIdx, langIdx, campIdx = fzTechnique, fzLanguage, fzCampaign
 	}
-	name := autoCSVName(m.mode.String(),
+	return autoCSVName(m.mode.String(),
 		fields[techIdx].value(),
 		fields[langIdx].value(),
 		fields[campIdx].value())
-	fields[csvIdx].input.SetValue(name)
 }
 
 func autoCSVName(mode, technique, language, campaign string) string {
@@ -582,7 +552,7 @@ func (m model) startE2E() (tea.Model, tea.Cmd) {
 		m.e2eFields[fLanguage].value(),
 		m.e2eFields[fCampaign].value(),
 		iterations,
-		m.e2eFields[fE2ECSV].value(),
+		"", // engine no longer writes; results are exported on demand
 	)
 	if err != nil {
 		m.setStatus(err.Error(), statusError)
@@ -599,7 +569,7 @@ func (m model) startE2E() (tea.Model, tea.Cmd) {
 	m.setStatus("running…", statusInfo)
 
 	go func() {
-		summary, runErr := e2e.Run(ctx, cfg, e2e.Events{
+		summary, _, runErr := e2e.Run(ctx, cfg, e2e.Events{
 			OnIteration: func(n, total int, row result.Row) {
 				ch <- engineRowMsg{e2eRow: row}
 				ch <- engineProgressMsg{cur: n, total: total}
@@ -627,7 +597,7 @@ func (m model) startFuzz() (tea.Model, tea.Cmd) {
 		m.fuzzFields[fzCampaign].value(),
 		trials,
 		m.fuzzFields[fzSeed].value(),
-		m.fuzzFields[fzCSV].value(),
+		"", // engine no longer writes; results are exported on demand
 	)
 	if err != nil {
 		m.setStatus(err.Error(), statusError)
@@ -645,7 +615,7 @@ func (m model) startFuzz() (tea.Model, tea.Cmd) {
 	m.setStatus("running…", statusInfo)
 
 	go func() {
-		summary, runErr := fuzz.Run(ctx, cfg, io.Discard, fuzz.Events{
+		summary, _, runErr := fuzz.Run(ctx, cfg, io.Discard, fuzz.Events{
 			OnTrial: func(trialID, total int, row map[string]string) {
 				ch <- engineRowMsg{fuzzRow: row}
 				ch <- engineProgressMsg{cur: trialID + 1, total: total, resultClass: row["result_class"]}
@@ -797,44 +767,66 @@ func (m model) handleBuildFinished(msg buildFinishedMsg) model {
 	return m
 }
 
-// exportResults writes the in-memory rows back to the active mode's configured
-// CSV path.
-func (m model) exportResults() (tea.Model, tea.Cmd) {
-	var count int
-	var path string
-	var write func() error
-	if m.mode == modeE2E {
-		count, path = len(m.e2eRows), m.e2eFields[fE2ECSV].value()
-		write = func() error { return result.WriteE2ECSV(path, m.e2eRows) }
-	} else {
-		count, path = len(m.fuzzRows), m.fuzzFields[fzCSV].value()
-		write = func() error { return writeFuzzRows(path, m.fuzzRows) }
-	}
-
-	if count == 0 {
+// beginExport opens the on-demand Export prompt, pre-filled with an auto-named
+// CSV path the user can accept or edit. Nothing is written until they confirm.
+func (m model) beginExport() (tea.Model, tea.Cmd) {
+	if m.resultCount() == 0 {
 		m.setStatus("no results to export", statusWarn)
 		return m, nil
 	}
-	if err := write(); err != nil {
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.Width = 50
+	ti.SetValue(m.defaultExportPath())
+	ti.CursorEnd()
+	m.exportInput = ti
+	m.exporting = true
+	m.setStatus("export: edit the path, enter to write, esc to cancel", statusInfo)
+	return m, ti.Focus()
+}
+
+// handleExportKey owns the keyboard while the Export prompt is open.
+func (m model) handleExportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		return m.doExport()
+	case "esc":
+		m.exporting = false
+		m.exportInput.Blur()
+		m.setStatus("export cancelled", statusInfo)
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.exportInput, cmd = m.exportInput.Update(msg)
+		return m, cmd
+	}
+}
+
+// doExport writes the in-memory rows to the path in the prompt. On failure the
+// prompt stays open so the user can fix the path and retry.
+func (m model) doExport() (tea.Model, tea.Cmd) {
+	path := strings.TrimSpace(m.exportInput.Value())
+	if path == "" {
+		m.setStatus("export path is empty", statusError)
+		return m, nil
+	}
+
+	var count int
+	var err error
+	if m.mode == modeE2E {
+		count, err = len(m.e2eRows), result.WriteE2ECSV(path, m.e2eRows)
+	} else {
+		count, err = len(m.fuzzRows), result.WriteFuzzCSV(path, m.fuzzRows)
+	}
+	if err != nil {
 		m.setStatus("export failed: "+err.Error(), statusError)
 		return m, nil
 	}
+
+	m.exporting = false
+	m.exportInput.Blur()
 	m.setStatus(fmt.Sprintf("exported %d rows to %s", count, path), statusOK)
 	return m, nil
-}
-
-func writeFuzzRows(path string, rows []map[string]string) error {
-	writer, err := result.OpenFuzzCSV(path)
-	if err != nil {
-		return err
-	}
-	for _, row := range rows {
-		if err := writer.WriteRow(row); err != nil {
-			writer.Close()
-			return err
-		}
-	}
-	return writer.Close()
 }
 
 // --- helpers ---

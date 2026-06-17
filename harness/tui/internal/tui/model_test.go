@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/result"
 )
 
 func update(t *testing.T, m model, msg tea.Msg) model {
@@ -30,10 +34,6 @@ func TestNewModelDefaults(t *testing.T) {
 	if got := m.e2eFields[fCampaign].value(); got != "mixed" {
 		t.Errorf("default campaign = %q, want mixed", got)
 	}
-	csv := m.e2eFields[fE2ECSV].value()
-	if !strings.HasPrefix(csv, "results/e2e-tmr-zig-mixed-") || !strings.HasSuffix(csv, ".csv") {
-		t.Errorf("auto CSV name = %q, want results/e2e-tmr-zig-mixed-<ts>.csv", csv)
-	}
 }
 
 func TestModeToggle(t *testing.T) {
@@ -45,10 +45,6 @@ func TestModeToggle(t *testing.T) {
 	}
 	if got := m.fuzzFields[fzCampaign].value(); got != "reg-bitflip" {
 		t.Errorf("fuzz default campaign = %q, want reg-bitflip", got)
-	}
-	csv := m.fuzzFields[fzCSV].value()
-	if !strings.HasPrefix(csv, "results/fuzz-") {
-		t.Errorf("fuzz auto CSV = %q, want results/fuzz-...", csv)
 	}
 }
 
@@ -197,58 +193,88 @@ func TestBuildFinishedStatus(t *testing.T) {
 	}
 }
 
-func TestCSVEditStopsRegeneration(t *testing.T) {
+// Export is on demand: with no results, activating it must not open the prompt
+// and must warn instead of writing anything.
+func TestExportWithNoResultsWarns(t *testing.T) {
 	m := newModel("/repo")
-	original := m.e2eFields[fE2ECSV].value()
-	// Move focus to the CSV field and type into it.
-	for !m.isCSVField() {
-		m = update(t, m, keyType(tea.KeyTab))
-		if m.onActions() {
-			t.Fatal("never reached CSV field")
-		}
+	next, _ := m.beginExport()
+	m = next.(model)
+	if m.exporting {
+		t.Error("export prompt should not open when there are no results")
 	}
-	m = update(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	if !m.csvEdited() {
-		t.Fatal("typing in CSV field should set csvEdited")
-	}
-	// Changing a select must no longer overwrite the edited path.
-	m.focus = 1 // technique
-	m = update(t, m, keyType(tea.KeyRight))
-	if m.e2eFields[fE2ECSV].value() == original {
-		t.Error("CSV path unexpectedly reverted to auto-name after manual edit")
+	if m.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want warn", m.statusKind)
 	}
 }
 
-// Editing one mode's CSV path must not freeze the OTHER mode's auto-naming
-// (finding #1): csvEdited is tracked per mode, so switching to fuzz after
-// editing the e2e path still produces a fuzz CSV name rather than an empty
-// path (which would route the run's CSV to stdout and corrupt the TUI).
-func TestEditingE2ECSVDoesNotFreezeFuzzCSV(t *testing.T) {
+// Activating Export opens a prompt pre-filled with an auto-named CSV path for
+// the active mode; the run itself never writes a CSV anymore.
+func TestExportPromptOpensWithAutoName(t *testing.T) {
 	m := newModel("/repo")
-	// Move focus to the e2e CSV field and type into it.
-	for !m.isCSVField() {
-		m = update(t, m, keyType(tea.KeyTab))
-		if m.onActions() {
-			t.Fatal("never reached CSV field")
-		}
+	m.e2eRows = []result.Row{{"technique": "tmr"}}
+	next, _ := m.beginExport()
+	m = next.(model)
+	if !m.exporting {
+		t.Fatal("export prompt should be open after activating Export with results")
 	}
-	m = update(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	if !m.e2eCSVEdited {
-		t.Fatal("typing in the e2e CSV field should mark e2e (not fuzz) edited")
+	path := m.exportInput.Value()
+	if !strings.HasPrefix(path, "results/e2e-tmr-zig-mixed-") || !strings.HasSuffix(path, ".csv") {
+		t.Errorf("prompt path = %q, want results/e2e-tmr-zig-mixed-<ts>.csv", path)
 	}
-	if m.fuzzCSVEdited {
-		t.Fatal("editing the e2e path must not mark the fuzz path edited")
-	}
+}
 
-	// Switch to fuzz; its CSV path must be auto-named, not left empty.
-	m.focus = 0
-	m = update(t, m, keyType(tea.KeyRight))
-	if m.mode != modeFuzz {
-		t.Fatalf("expected fuzz mode after toggle, got %v", m.mode)
+// Esc cancels the prompt without writing; the rows are untouched.
+func TestExportPromptEscCancels(t *testing.T) {
+	m := newModel("/repo")
+	m.e2eRows = []result.Row{{"technique": "tmr"}}
+	next, _ := m.beginExport()
+	m = next.(model)
+	m = update(t, m, keyType(tea.KeyEsc))
+	if m.exporting {
+		t.Error("esc should close the export prompt")
 	}
-	csv := m.fuzzFields[fzCSV].value()
-	if !strings.HasPrefix(csv, "results/fuzz-") || !strings.HasSuffix(csv, ".csv") {
-		t.Errorf("fuzz CSV = %q, want auto-named results/fuzz-*.csv after editing the e2e path", csv)
+	if m.statusKind != statusInfo || !strings.Contains(m.status, "cancel") {
+		t.Errorf("status = %q (kind %v), want a cancel info message", m.status, m.statusKind)
+	}
+}
+
+// Enter on the prompt writes the in-memory rows to the typed path and reports
+// the count; the run no longer auto-exports, so this is the only write path.
+func TestExportPromptEnterWritesCSV(t *testing.T) {
+	m := newModel("/repo")
+	m.e2eRows = []result.Row{{"technique": "tmr"}, {"technique": "tmr"}}
+	next, _ := m.beginExport()
+	m = next.(model)
+
+	path := filepath.Join(t.TempDir(), "out.csv")
+	m.exportInput.SetValue(path)
+	m = update(t, m, keyType(tea.KeyEnter))
+
+	if m.exporting {
+		t.Error("a successful export should close the prompt")
+	}
+	if m.statusKind != statusOK || !strings.Contains(m.status, "exported 2 rows") {
+		t.Errorf("status = %q (kind %v), want an OK 'exported 2 rows' message", m.status, m.statusKind)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("expected CSV at %s: %v", path, err)
+	}
+}
+
+// An empty path on Enter is rejected and the prompt stays open so the user can
+// fix it (no file is written).
+func TestExportPromptRejectsEmptyPath(t *testing.T) {
+	m := newModel("/repo")
+	m.e2eRows = []result.Row{{"technique": "tmr"}}
+	next, _ := m.beginExport()
+	m = next.(model)
+	m.exportInput.SetValue("   ")
+	m = update(t, m, keyType(tea.KeyEnter))
+	if !m.exporting {
+		t.Error("prompt should stay open on an empty path")
+	}
+	if m.statusKind != statusError {
+		t.Errorf("statusKind = %v, want error for empty path", m.statusKind)
 	}
 }
 

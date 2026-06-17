@@ -6,11 +6,11 @@ Decisions already locked in (from the architecture questions):
 
 - **Full port** — no Python at runtime. Single static Go binary.
 - **One TUI, mode toggle** — top-level switch between E2E Injector and Fuzz Runner.
-- **Run-to-completion UX** — progress bar + spinner during the run, results table populates from the produced CSV after the run finishes. No streaming row updates.
+- **Run-to-completion UX** — progress bar + spinner during the run, results table populates from the in-memory rows after the run finishes. No streaming row updates.
 - **GDB/MI via `github.com/cyrus-and/gdb`** — no hand-rolled MI parser. A thin wrapper adds the timeout behaviour pygdbmi gave us (see §3).
-- **Headless mode ships** — `--headless` drives both engines without the TUI, preserving the Python CLIs' exit codes (e2e: non-zero if the final row has `failures != 0`) and the stdout-CSV default for CI.
+- **Headless mode ships** — dedicated `e2e` / `fuzz` subcommands (kong-based CLI) drive each engine without the TUI, preserving the Python CLIs' exit codes (e2e: exit 1 if the final row has `failures != 0`, exit 2 on usage/run errors) and the stdout-CSV default for CI. A bare `harness-tui` (no subcommand) opens the TUI.
 - **Rebuild from the TUI** — a `[Rebuild]` action runs `zig build harness` / `zig build fuzz-harness` for the current mode, output surfaced in the status area. The devenv scripts ran this before every campaign; without it a stale ELF is a silent footgun (the CLIs only check the file exists).
-- **CSV path default** — TUI auto-names `results/{mode}-{technique}-{language}-{campaign}-{timestamp}.csv`; headless keeps stdout when `--csv` is omitted (CLI parity).
+- **Export on demand** — a TUI run never touches the disk; results stay in memory until the `[Export]` action opens a prompt pre-filled with an auto-named path (`results/{mode}-{technique}-{language}-{campaign}-{timestamp}.csv`), which the user accepts or edits before writing. Headless writes the CSV itself, keeping stdout when `--csv` is omitted (CLI parity).
 
 ---
 
@@ -126,10 +126,9 @@ Single column, three vertically-stacked panes, controlled by a global keymap.
 │  Language   : zig            ▾                               │
 │  Campaign   : mixed          ▾   ← choices reload on         │
 │  Iterations : 20                   technique change          │
-│  CSV path   : results/e2e-tmr-zig-mixed-20260611T1430.csv    │
 │  (Env)      HARNESS_E2E_GDB_PORT=1234  STOP_TIMEOUT=10.0     │
 ├─ Actions ────────────────────────────────────────────────────┤
-│  [Start]  [Stop]  [Rebuild]  [Export CSV]  [Clear]  [Quit]   │
+│  [Start]  [Stop]  [Rebuild]  [Export]  [Clear]  [Quit]       │
 │  status: running iteration 7 / 20   ▓▓▓▓▓▓▓░░░░░             │
 ├─ Results ────────────────────────────────────────────────────┤
 │ iter│technique│campaign│result│stage_name│fault_name│value   │
@@ -141,16 +140,16 @@ Single column, three vertically-stacked panes, controlled by a global keymap.
 
 Behavioural notes:
 
-- **Mode pane**: arrow keys or `tab` flips mode. Switching mode discards the in-memory results table (Export warns if unsaved).
+- **Mode pane**: arrow keys or `tab` flips mode. Switching mode discards the in-memory results table.
 - **Configuration pane**: tab cycles inputs; enums use `bubbles/list` or a custom select; numeric inputs use `bubbles/textinput` with validators. The campaign choices list is **derived from the selected technique** in E2E mode, matching the validation matrix in the Python CLI. Defaults come from `.env`/env vars at startup.
-- **Actions bar**: Start kicks off a goroutine that drives the engine; events are funneled to the bubbletea model via a channel (`tea.Cmd` returning messages). Stop sends cancellation. Rebuild runs the mode's `zig build` step (`harness` for E2E, `fuzz-harness` for fuzz) with stdout/stderr streamed into the status area; Start is disabled while a build is in flight. Export writes the in-memory rows to a user-chosen path (defaults to the `CSV path` field). Clear empties the results table.
+- **Actions bar**: Start kicks off a goroutine that drives the engine; events are funneled to the bubbletea model via a channel (`tea.Cmd` returning messages). Stop sends cancellation. Rebuild runs the mode's `zig build` step (`harness` for E2E, `fuzz-harness` for fuzz) with stdout/stderr streamed into the status area; Start is disabled while a build is in flight. Export (enabled only when idle with results) opens a prompt pre-filled with an auto-named path; confirming writes the in-memory rows there, esc cancels. Clear empties the results table.
 - **Progress**: `iteration X/N` (E2E) or `trial X/N` (fuzz). Final line: pass/fail counts (E2E) or result-class histogram (fuzz). Optional spinner while QEMU is starting/connecting.
 - **Results pane**: `bubbles/table` with:
   - **E2E** columns vary by technique. Base columns always shown; technique-specific columns appended dynamically. The Python CSV format is the contract — column order matches `_FUZZ_CSV_FIELDS` / per-technique field lists in `result_format.py`.
   - **Fuzz** uses the fixed 31-column schema. **Caveat: `bubbles/table` has no native horizontal scrolling.** Ship a curated default column subset (trial_id, result_class, fault_mode, target_name, bit, process_status, elapsed_ms) with a key to toggle column pages; the full 31 columns always land in the CSV regardless.
   - Filtering by `result` / `result_class` is a stretch goal — leave a hook in the keymap but ship without it.
 
-The TUI's "Export CSV" is **separate** from the `CSV path` config field. The config field is what gets passed to the engine as the run's CSV. Note the engines differ here, matching the Python behaviour: the fuzz runner streams one row per trial, but the e2e injector accumulates all rows and writes once at campaign end (the pass/failure deltas in `_clean_e2e_result_rows` are computed over the row sequence). Export is a TUI-level convenience to dump the in-memory table to a different path (e.g., user changed their mind, or wants a filtered subset).
+In the TUI, **Export is the only path to disk** — the engines no longer write CSVs (they return the collected rows), so a run leaves nothing on disk until you Export. The headless `e2e` / `fuzz` subcommands write the returned rows themselves. The engines still accumulate rows the same way internally, matching the Python behaviour: the fuzz runner collects one row per trial, and the e2e injector builds the full row sequence before the pass/failure deltas in `_clean_e2e_result_rows` are computed over it.
 
 ---
 
@@ -162,7 +161,7 @@ The bubbletea model is single-threaded. The run engine is not. Pattern:
    - Spawns a goroutine running the engine (E2E or Fuzz).
    - Returns a "subscription" `tea.Cmd` that reads from a buffered channel of `engineEvent`.
 2. The engine emits events: `runStarted`, `iterationProgress{n, total}`, `iterationRow{row}`, `runFinished{summary, err}`.
-3. The model updates progress UI on each event and appends to its internal `[]row` (even though the table isn't shown live, this lets `Export CSV` work).
+3. The model updates progress UI on each event and appends to its internal `[]row` (even though the table isn't shown live, this lets `Export` work).
 4. On finish, model rebuilds the bubbles/table model from `rows` and reveals the results pane.
 5. Stop: model cancels the context the engine was created with; engine SIGTERMs the child QEMU/GDB processes. The engine still emits `runFinished` with the rows collected so far, so the table populates and Export works on partial runs — an improvement over the Python e2e injector, which discards all rows on abort.
 
@@ -194,14 +193,14 @@ A suggested order — each phase is independently mergeable.
 
 ### Phase 2: shared core (no TUI yet)
 - `internal/config/`, `internal/elf/`, `internal/qemu/`, `internal/result/`.
-- A `cmd/harness-tui --headless --mode fuzz ...` mode that mimics the Python CLI exactly. This lets us validate the porting **before** building any UI.
+- A `cmd/harness-tui fuzz ...` headless subcommand that mimics the Python CLI exactly. This lets us validate the porting **before** building any UI.
 
 ### Phase 3: fuzz engine (no TUI)
-- `internal/fuzz/` + `--mode fuzz` headless. Validate against the Python output on a fixed seed (CSVs should be byte-identical except for `elapsed_ms`).
+- `internal/fuzz/` + the `fuzz` headless subcommand. Validate against the Python output on a fixed seed (CSVs should be byte-identical except for `elapsed_ms`).
 - Port `classification_test.py` cases.
 
 ### Phase 4: e2e engine (no TUI)
-- `internal/gdbmi/`, `internal/e2e/` + `--mode e2e` headless. Validate against the Python output for `none` and `clean-*` campaigns (deterministic) on a fixed iteration count.
+- `internal/gdbmi/`, `internal/e2e/` + the `e2e` headless subcommand. Validate against the Python output for `none` and `clean-*` campaigns (deterministic) on a fixed iteration count.
 
 ### Phase 5: TUI shell
 - `internal/tui/` model, mode pane, config pane, actions bar, progress. Wire Start to the engines from phases 3 & 4. Results pane still empty.
@@ -221,7 +220,7 @@ A suggested order — each phase is independently mergeable.
 
 ## 8. Open questions for refinement
 
-Resolved: headless mode ships (locked, see top); CSV default auto-names under `results/` in TUI mode, stdout in headless (locked); module path is `github.com/b-kaf/fault-tolerance-comparison/harness/tui` (matches the git remote); nothing outside the two CLIs imports `harness_shared` (`research/` is papers only), so it gets deleted with the rest of the Python tree.
+Resolved: headless mode ships (locked, see top); CSV auto-names under `results/` as the TUI Export default, stdout in headless (locked); module path is `github.com/b-kaf/fault-tolerance-comparison/harness/tui` (matches the git remote); nothing outside the two CLIs imports `harness_shared` (`research/` is papers only), so it gets deleted with the rest of the Python tree.
 
 1. **Run history within a session**: queue multiple runs and compare? Or strictly one run at a time, replace results on Start? (My recommendation: one at a time for v1; add a "runs" pane later if needed.)
 2. **Table column toggling / filtering**: ship v1 read-only with column pages, or add filter-by-result? (My recommendation: read-only v1.)

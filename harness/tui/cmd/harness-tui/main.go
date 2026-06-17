@@ -2,89 +2,166 @@ package main
 
 import (
 	"context"
-	"flag"
+	"errors"
 	"fmt"
 	"os"
+
+	"github.com/alecthomas/kong"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/e2e"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/fuzz"
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/result"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/run"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/tui"
 )
 
-func main() {
-	os.Exit(main2())
+// Exit codes are part of the CLI contract CI depends on (see PLAN.md): a clean
+// e2e campaign exits 0, one that runs but ends with a non-zero failure counter
+// exits 1, and any bad input / usage error / hard run error exits 2.
+const (
+	exitOK       = 0
+	exitFailures = 1
+	exitError    = 2
+)
+
+// errFailures marks an e2e campaign that completed without error but whose
+// outcome is a failure. It maps to exitFailures and is not reported as an error.
+var errFailures = errors.New("campaign completed with failures")
+
+// CLI is the kong grammar. Each command is its own subcommand with its own
+// flags; tui is the default so a bare `harness-tui` still opens the UI.
+type CLI struct {
+	TUI  tuiCmd  `cmd:"" name:"tui" default:"1" help:"Launch the interactive TUI (default when no command is given)."`
+	E2E  e2eCmd  `cmd:"" name:"e2e" help:"Run an end-to-end GDB fault-injection campaign without the TUI."`
+	Fuzz fuzzCmd `cmd:"" name:"fuzz" help:"Run a QEMU-plugin fuzzing campaign without the TUI."`
 }
 
-func main2() int {
-	headless := flag.Bool("headless", false, "run without the TUI (scripted/CI mode)")
-	mode := flag.String("mode", "", "engine to drive in headless mode: e2e | fuzz")
-	technique := flag.String("technique", "tmr", "harness technique: tmr | checkpoint | recovery-block | control-flow")
-	language := flag.String("language", "", "harness implementation language: c | zig")
-	campaign := flag.String("campaign", "", "campaign name (default: mixed for e2e, reg-bitflip for fuzz)")
-	iterations := flag.Int("iterations", 0, "e2e iteration count (default: $HARNESS_E2E_ITERATIONS or 20)")
-	trials := flag.Int("trials", 0, "fuzz trial count (default: $HARNESS_FUZZ_TRIALS or 20)")
-	seed := flag.String("seed", "", "fuzz campaign seed, u64 (default: $HARNESS_FUZZ_SEED or 0xC0DEC0DE)")
-	csvPath := flag.String("csv", "", "write results to this CSV path instead of stdout (headless)")
-	flag.Parse()
+// env is resolved once and injected into each command's Run by kong.
+type env struct {
+	repoRoot string
+}
 
-	cwd, err := os.Getwd()
+type tuiCmd struct{}
+
+func (c *tuiCmd) Run(e *env) error {
+	return tui.Run(e.repoRoot)
+}
+
+type e2eCmd struct {
+	Technique  string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow" default:"tmr"`
+	Language   string `help:"Harness implementation language." enum:"c,zig" required:""`
+	Campaign   string `help:"Campaign name." default:"mixed"`
+	Iterations int    `help:"Iteration count (0 = $HARNESS_E2E_ITERATIONS or 20)." default:"0"`
+	CSV        string `help:"Write results to this CSV path instead of stdout." placeholder:"PATH"`
+}
+
+func (c *e2eCmd) Run(e *env) error {
+	cfg, err := run.ResolveE2E(e.repoRoot, c.Technique, c.Language, c.Campaign, c.Iterations, c.CSV)
+	if err != nil {
+		return err
+	}
+	summary, rows, err := e2e.Run(context.Background(), cfg, e2e.Events{})
+	if err != nil {
+		return err
+	}
+	if err := result.WriteE2ECSV(cfg.CSV, rows); err != nil {
+		return err
+	}
+	if cfg.CSV != "" {
+		fmt.Printf("wrote %s (%d iterations, passes=%d failures=%d)\n",
+			cfg.CSV, summary.Iterations, summary.Passes, summary.Failures)
+	}
+	if !summary.Success() {
+		return errFailures
+	}
+	return nil
+}
+
+type fuzzCmd struct {
+	Technique string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow" default:"tmr"`
+	Language  string `help:"Harness implementation language." enum:"c,zig" required:""`
+	Campaign  string `help:"Campaign name." default:"reg-bitflip"`
+	Trials    int    `help:"Trial count (0 = $HARNESS_FUZZ_TRIALS or 20)." default:"0"`
+	Seed      string `help:"Campaign seed, u64 (empty = $HARNESS_FUZZ_SEED or 0xC0DEC0DE)."`
+	CSV       string `help:"Write results to this CSV path instead of stdout." placeholder:"PATH"`
+}
+
+func (c *fuzzCmd) Run(e *env) error {
+	cfg, err := run.ResolveFuzz(e.repoRoot, c.Technique, c.Language, c.Campaign, c.Trials, c.Seed, c.CSV)
+	if err != nil {
+		return err
+	}
+	summary, rows, err := fuzz.Run(context.Background(), cfg, os.Stderr, fuzz.Events{})
+	if err != nil {
+		return err
+	}
+	if err := result.WriteFuzzCSV(cfg.CSV, rows); err != nil {
+		return err
+	}
+	if cfg.CSV == "" {
+		fmt.Fprintf(os.Stderr, "summary: %s\n", summary)
+	} else {
+		fmt.Printf("wrote %s (%s)\n", cfg.CSV, summary)
+	}
+	return nil
+}
+
+func main() {
+	os.Exit(realMain())
+}
+
+func realMain() int {
+	var cli CLI
+	parser, err := kong.New(&cli,
+		kong.Name("harness-tui"),
+		kong.Description("Fault-tolerance harness runner: an interactive TUI plus headless e2e/fuzz campaigns."),
+	)
+	if err != nil {
+		return fail(err) // a malformed grammar is a programmer error
+	}
+	kctx, err := parser.Parse(os.Args[1:])
+	if err != nil {
+		// Show context-sensitive usage on a parse error, then exit 2 (kong's
+		// own default would exit 1, which we reserve for e2e failures).
+		var pe *kong.ParseError
+		if errors.As(err, &pe) && pe.Context != nil {
+			_ = pe.Context.PrintUsage(false)
+		}
+		return fail(err)
+	}
+
+	e, err := newEnv()
 	if err != nil {
 		return fail(err)
+	}
+
+	switch err := kctx.Run(e); {
+	case err == nil:
+		return exitOK
+	case errors.Is(err, errFailures):
+		return exitFailures
+	default:
+		return fail(err)
+	}
+}
+
+// newEnv resolves the repo root and loads the project .env once, before any
+// command runs.
+func newEnv() (*env, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
 	}
 	repoRoot, err := config.FindRepoRoot(cwd)
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	config.LoadDotenv(repoRoot)
-
-	if !*headless {
-		if err := tui.Run(repoRoot); err != nil {
-			return fail(err)
-		}
-		return 0
-	}
-
-	switch *mode {
-	case "e2e":
-		cfg, err := run.ResolveE2E(repoRoot, *technique, *language, *campaign, *iterations, *csvPath)
-		if err != nil {
-			return fail(err)
-		}
-		summary, err := e2e.Run(context.Background(), cfg, e2e.Events{})
-		if err != nil {
-			return fail(err)
-		}
-		if cfg.CSV != "" {
-			fmt.Printf("wrote %s (%d iterations, passes=%d failures=%d)\n",
-				cfg.CSV, summary.Iterations, summary.Passes, summary.Failures)
-		}
-		if summary.Success() {
-			return 0
-		}
-		return 1
-	case "fuzz":
-		cfg, err := run.ResolveFuzz(repoRoot, *technique, *language, *campaign, *trials, *seed, *csvPath)
-		if err != nil {
-			return fail(err)
-		}
-		summary, err := fuzz.Run(context.Background(), cfg, os.Stderr, fuzz.Events{})
-		if err != nil {
-			return fail(err)
-		}
-		if cfg.CSV == "" {
-			fmt.Fprintf(os.Stderr, "summary: %s\n", summary)
-		} else {
-			fmt.Printf("wrote %s (%s)\n", cfg.CSV, summary)
-		}
-		return 0
-	default:
-		return fail(fmt.Errorf("--headless requires --mode e2e or --mode fuzz"))
-	}
+	return &env{repoRoot: repoRoot}, nil
 }
 
 func fail(err error) int {
 	fmt.Fprintf(os.Stderr, "harness-tui: %v\n", err)
-	return 2
+	return exitError
 }

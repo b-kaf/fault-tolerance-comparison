@@ -109,6 +109,22 @@ func (w *FuzzWriter) WriteRow(row map[string]string) error {
 
 func (w *FuzzWriter) Close() error { return w.csv.Close() }
 
+// WriteFuzzCSV writes a header plus every row to path in one call, the batch
+// counterpart to the streaming FuzzWriter. Empty path writes to stdout.
+func WriteFuzzCSV(path string, rows []map[string]string) error {
+	writer, err := OpenFuzzCSV(path)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := writer.WriteRow(row); err != nil {
+			writer.Close()
+			return err
+		}
+	}
+	return writer.Close()
+}
+
 // FormatFuzzResultRow mirrors format_fuzz_result_row: fixed identity fields
 // first, then facts mapped to their columns without overwriting, then ""
 // defaults for every schema column.
