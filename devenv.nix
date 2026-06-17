@@ -18,7 +18,6 @@ in
     pkgs.nixfmt
     pkgs.llvmPackages.bintools
     pkgs.qemu
-    pkgs.uv
     qemuFtFuzzPlugin
   ];
 
@@ -43,49 +42,6 @@ in
 
   scripts.harness-build.exec = ''
     zig build harness
-  '';
-  scripts.harness-campaign.exec = ''
-    set -eu
-
-    language="''${1:-}"
-    technique="''${2:-}"
-
-    if [ -z "$language" ] || [ -z "$technique" ]; then
-      echo "usage: harness-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow>" >&2
-      exit 2
-    fi
-
-    zig build harness
-
-    uv run --directory harness/e2e/injector python main.py \
-      --language "$language" \
-      --technique "$technique" \
-      --campaign mixed \
-      --iterations 10
-  '';
-  scripts.harness-fuzz-campaign.exec = ''
-    set -eu
-
-    language="''${1:-}"
-    technique="''${2:-}"
-    campaign="''${3:-reg-bitflip}"
-    trials="''${4:-20}"
-    seed="''${5:-0xC0DEC0DE}"
-
-    if [ -z "$language" ] || [ -z "$technique" ]; then
-      echo "usage: harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> [none|ram-bitflip|reg-bitflip] [trials] [seed]" >&2
-      exit 2
-    fi
-
-    zig build fuzz-harness
-
-    QEMU_FT_FUZZ_PLUGIN="${qemuFtFuzzPlugin}/lib/qemu-ft-fuzz.so" \
-      uv run --directory harness/fuzz/runner python main.py \
-        --language "$language" \
-        --technique "$technique" \
-        --campaign "$campaign" \
-        --seed "$seed" \
-        --trials "''${ITERATIONS:-$trials}"
   '';
   scripts.harness-tui.exec = ''
     set -eu

@@ -14,7 +14,9 @@ This harness builds bare-metal Cortex-M4 firmware images for QEMU's
 
 Both are cross-compiled by Zig through `build.zig`. Shared startup, linker, and
 ABI definitions live in `harness/common`; implementation-specific loop harnesses
-and the GDB/RSP injector live in `harness/e2e`.
+live in `harness/e2e` and `harness/fuzz`. The GDB/RSP injector, the QEMU TCG
+plugin fuzz runner, and the interactive TUI that drives them all live in
+`harness/tui` (a single Go binary).
 
 ## Build
 
@@ -35,68 +37,39 @@ Those ELFs use names such as
 
 ## Run A Campaign
 
-From the devenv shell, the shortest form is:
+The harness runner is the Go binary in `harness/tui`. From the devenv shell,
+`harness-tui` launches the interactive TUI; the `e2e` and `fuzz` subcommands run
+a campaign headlessly and write CSV (to stdout by default, or to `--csv PATH`):
 
 ```sh
-harness-campaign c tmr
-```
+harness-tui e2e --technique tmr --language c --iterations 20
 
-The helper takes `<language> <technique>` and always runs the `mixed` campaign
-for 10 iterations:
+harness-tui e2e --technique tmr --language zig --iterations 20
 
-```sh
-harness-campaign c tmr
-harness-campaign zig checkpoint
-```
-
-```sh
-cd harness/e2e/injector
-uv run python main.py \
-  --technique tmr \
-  --language c \
-  --iterations 20
-
-uv run python main.py \
-  --technique tmr \
-  --language zig \
-  --iterations 20
-
-uv run python main.py \
+harness-tui e2e \
   --technique checkpoint \
   --language c \
   --campaign checkpoint-mixed-faults \
   --iterations 20
 
-uv run python main.py \
-  --technique checkpoint \
-  --language zig \
-  --campaign checkpoint-mixed-faults \
-  --iterations 20
-
-uv run python main.py \
-  --technique recovery-block \
-  --language c \
-  --campaign recovery-mixed-faults \
-  --iterations 20
-
-uv run python main.py \
+harness-tui e2e \
   --technique recovery-block \
   --language zig \
   --campaign recovery-mixed-faults \
   --iterations 20
 
-uv run python main.py \
+harness-tui e2e \
   --technique control-flow \
   --language c \
-  --campaign control-mixed-faults \
-  --iterations 20
-
-uv run python main.py \
-  --technique control-flow \
-  --language zig \
   --campaign control-mixed-faults \
   --iterations 20
 ```
+
+`--technique` defaults to `tmr`, `--campaign` to `mixed` (the `mixed` and `none`
+campaigns apply to every technique; each technique also has its own
+`<technique>-mixed-faults` and clean-run campaigns). The headless `e2e` command
+exits `0` on a clean run, `1` if the campaign completes with a non-zero failure
+counter, and `2` on a usage or run error.
 
 The injector launches:
 
@@ -105,60 +78,48 @@ qemu-system-arm -M mps2-an386 -cpu cortex-m4 -kernel <elf> -nographic -S -gdb tc
 ```
 
 The `<elf>` path is inferred as
-`zig-out/harness/<technique>-harness-<language>-m4.elf`. The injector then uses
-`pygdbmi` to drive GDB/MI. GDB connects to QEMU's GDB Remote Serial Protocol
-endpoint, places breakpoints on the exported injection hooks, writes the
+`zig-out/harness/<technique>-harness-<language>-m4.elf`. The injector then drives
+GDB/MI (via `gdb --interpreter=mi2`). GDB connects to QEMU's GDB Remote Serial
+Protocol endpoint, places breakpoints on the exported injection hooks, writes the
 fault-control globals, and records the result counters exposed by the firmware.
 The injector always launches `qemu-system-arm` and uses `gdb` on localhost.
-Defaults for iterations, GDB port, and timeouts live in
-`harness/e2e/injector/.env`; CLI `--iterations` overrides the `.env` value.
+Defaults for iterations, GDB port, and timeouts come from the
+`HARNESS_E2E_*` environment variables (overridable via a project `.env`); CLI
+`--iterations` overrides them.
 
 ## Run A QEMU TCG Plugin Fuzz Campaign
 
 The fuzz runner uses the single-shot fuzz harnesses and the QEMU TCG plugin. Each trial
 launches one QEMU process, injects at most one fault, records raw facts from the
-firmware, and writes one classified CSV row. From the devenv shell:
+firmware, and writes one classified CSV row. From the devenv shell, the `fuzz`
+subcommand runs it headlessly:
 
 ```sh
-harness-fuzz-campaign c tmr
-harness-fuzz-campaign zig tmr reg-bitflip-window 100 0x1234
-harness-fuzz-campaign c checkpoint ram-symbol-bitflip 100 0x1234
+harness-tui fuzz --technique tmr --language c
+harness-tui fuzz --technique tmr --language zig --campaign reg-bitflip --trials 100 --seed 0x1234
+harness-tui fuzz --technique checkpoint --language c --campaign ram-bitflip --trials 100 --seed 0x1234
 ```
 
-The helper takes:
+The campaigns are `none`, `ram-bitflip`, and `reg-bitflip` (the default).
+`reg-bitflip` flips a random bit in a general-purpose register while
+`harness_fault_window_open` is set; `ram-bitflip` chooses from exported
+`harness_fuzz_*` live-state symbols.
 
-```sh
-harness-fuzz-campaign <c|zig> <tmr|checkpoint|recovery-block|control-flow> \
-  [none|ram-symbol-bitflip|reg-bitflip-window] [trials] [seed]
-```
-
-It builds the fuzz harness firmware, uses the Nix-built `qemu-ft-fuzz.so`
-plugin, and writes CSV output to stdout.
-`reg-bitflip-window` is the default campaign and flips a random bit in a
-general-purpose register while `harness_fault_window_open` is set.
-`ram-symbol-bitflip` chooses from exported `harness_fuzz_*` live-state symbols.
+It builds the fuzz harness firmware separately (`zig build fuzz-harness`), uses
+the Nix-built `qemu-ft-fuzz.so` plugin, and writes CSV output to stdout (a
+run summary goes to stderr so it stays out of the CSV).
 
 Rows are classified as `masked`, `sdc`, `detected`, `corrected`, `fail_safe`,
 `crash`, `hang`, or `invalid_trial`. The firmware exports raw facts such as
 `harness_output`, `harness_expected`, `harness_detected`,
-`harness_corrected`, and `harness_safe_state`; the Python runner assigns the
-final class.
-
-The runner can also be called directly:
-
-```sh
-QEMU_FT_FUZZ_PLUGIN=/path/to/qemu-ft-fuzz.so \
-  uv run --directory harness/fuzz/runner python main.py \
-    --technique tmr \
-    --language c \
-    --campaign reg-bitflip-window \
-    --trials 20
-```
+`harness_corrected`, and `harness_safe_state`; the runner assigns the final
+class.
 
 Pass `--csv <path>` to write the CSV to a file instead of stdout.
-Defaults for trials, seed, timeout, and instruction budget live in
-`harness/fuzz/runner/.env`; CLI `--trials` and `--seed` override the `.env`
-values. Set `QEMU_FT_FUZZ_PLUGIN` in the shell or `.env`.
+Defaults for trials, seed, timeout, and instruction budget come from the
+`HARNESS_FUZZ_*` environment variables (overridable via a project `.env`); CLI
+`--trials` and `--seed` override them. The QEMU plugin path comes from
+`QEMU_FT_FUZZ_PLUGIN`, which the `harness-tui` devenv script sets automatically.
 
 ## Firmware ABI
 
