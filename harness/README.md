@@ -111,12 +111,18 @@ harness-tui fuzz --technique tmr --language zig --campaign reg-bitflip --trials 
 harness-tui fuzz --technique checkpoint --language c --campaign ram-bitflip --trials 100 --seed 0x1234
 harness-tui fuzz --technique combined --language zig --campaign ram-bitflip --trials 150
 harness-tui fuzz --technique baseline --language zig --campaign ram-bitflip --trials 150
+harness-tui fuzz --technique tmr --language c --campaign insn-skip --trials 100
 ```
 
-The campaigns are `none`, `ram-bitflip`, and `reg-bitflip` (the default).
-`reg-bitflip` flips a random bit in a general-purpose register while
-`harness_fault_window_open` is set; `ram-bitflip` chooses from exported
-`harness_fuzz_*` live-state symbols.
+The campaigns are `none`, `ram-bitflip`, `reg-bitflip` (the default), and
+`insn-skip`. `reg-bitflip` flips a random bit in a general-purpose register
+while `harness_fault_window_open` is set; `ram-bitflip` chooses from exported
+`harness_fuzz_*` live-state symbols. `insn-skip` removes a single instruction
+from the executed stream by advancing the PC past it (it skips the instruction
+*after* a random offset into the fault window). To make a mid-block PC write
+remove exactly one instruction, `insn-skip` trials run QEMU with
+`-accel tcg,one-insn-per-tb=on`; this flag is scoped to that campaign only (the
+others are unaffected) and makes its trials noticeably slower.
 
 It builds the fuzz harness firmware separately (`zig build fuzz-harness`), uses
 the Nix-built `qemu-ft-fuzz.so` plugin, and writes CSV output to stdout (a

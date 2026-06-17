@@ -11,14 +11,15 @@ import (
 )
 
 type Campaign struct {
-	Name                string
-	FaultMode           string
-	FaultDomain         string
-	RequiresInjection   bool
-	RequiresFuzzSymbols bool
+	Name                 string
+	FaultMode            string
+	FaultDomain          string
+	RequiresInjection    bool
+	RequiresFuzzSymbols  bool
+	RequiresOneInsnPerTB bool
 }
 
-var CampaignChoices = []string{"none", "ram-bitflip", "reg-bitflip"}
+var CampaignChoices = []string{"none", "ram-bitflip", "reg-bitflip", "insn-skip"}
 
 var campaigns = map[string]Campaign{
 	"none": {Name: "none", FaultMode: "none", FaultDomain: "none"},
@@ -34,6 +35,13 @@ var campaigns = map[string]Campaign{
 		FaultMode:         "reg-bitflip",
 		FaultDomain:       "register",
 		RequiresInjection: true,
+	},
+	"insn-skip": {
+		Name:                 "insn-skip",
+		FaultMode:            "insn-skip",
+		FaultDomain:          "instruction",
+		RequiresInjection:    true,
+		RequiresOneInsnPerTB: true,
 	},
 }
 

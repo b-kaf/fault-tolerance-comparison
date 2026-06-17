@@ -162,7 +162,7 @@ func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialPar
 	}
 
 	process, err := RunQemuTrial(ctx, qemu.Binary, cfg.Elf, cfg.Plugin,
-		manifestPath, donePath, cfg.Timeout, warnings)
+		manifestPath, donePath, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings)
 	if err != nil {
 		return nil, err
 	}

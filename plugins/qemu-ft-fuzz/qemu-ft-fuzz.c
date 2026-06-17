@@ -335,7 +335,7 @@ static void prepare_register_fault(void) {
     return;
   }
   g.window_insns_seen = 0;
-  g.reg_inject_after = 1 + rng_bounded(8);
+  g.reg_inject_after = 1 + rng_bounded(16);
   g.selected_reg = rng_bounded((uint32_t)g.reg_count);
   g.fault.bit = rng_bounded(32);
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg-pending");
@@ -389,7 +389,7 @@ static void prepare_insn_skip(void) {
     return;
   }
   g.window_insns_seen = 0;
-  g.insn_skip_after = 1 + rng_bounded(8);
+  g.insn_skip_after = 1 + rng_bounded(16);
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "insn-skip-pending");
   copy_str(g.fault.target_name, sizeof(g.fault.target_name), "pc");
 }

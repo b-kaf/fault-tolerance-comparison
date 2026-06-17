@@ -24,9 +24,16 @@ const terminateTimeout = 2 * time.Second
 // poll for the done flag (checked before process exit, since QEMU keeps
 // running after the plugin writes it), and classify how the process ended.
 // Cancelling ctx terminates the trial early with status "cancelled".
-func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest, done string, timeout time.Duration, warnings io.Writer) (ProcessResult, error) {
+//
+// oneInsnPerTB appends -accel tcg,one-insn-per-tb=on, required by the insn-skip
+// campaign so a mid-TB PC write removes exactly one instruction; it is gated
+// per-campaign because it slows emulation and other modes do not need it.
+func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest, done string, timeout time.Duration, oneInsnPerTB bool, warnings io.Writer) (ProcessResult, error) {
 	argv := append(qemu.BaseCommand(qemuBin, elfPath),
 		"-plugin", fmt.Sprintf("file=%s,manifest=%s", plugin, manifest))
+	if oneInsnPerTB {
+		argv = append(argv, "-accel", "tcg,one-insn-per-tb=on")
+	}
 
 	start := time.Now()
 	proc, err := qemu.Start(argv)
