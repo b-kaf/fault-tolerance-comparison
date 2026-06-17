@@ -327,6 +327,26 @@ pub fn build(b: *std.Build) void {
         optimize,
         fuzz_harness_step,
     );
+    addCortexM4CFuzzHarness(
+        b,
+        "combined-fuzz-harness-c-m4",
+        "harness/fuzz/c/combined_fuzz_harness.c",
+        &.{ "harness/fuzz/c", "harness/common", "c/tmr", "c/checker", "c/checkpoint", "c/recovery_block", "c/control_flow" },
+        "combined-fuzz-harness-c-m4.elf",
+        mps2_an386,
+        optimize,
+        fuzz_harness_step,
+    );
+    addCortexM4CFuzzHarness(
+        b,
+        "baseline-fuzz-harness-c-m4",
+        "harness/fuzz/c/baseline_fuzz_harness.c",
+        &.{ "harness/fuzz/c", "harness/common" },
+        "baseline-fuzz-harness-c-m4.elf",
+        mps2_an386,
+        optimize,
+        fuzz_harness_step,
+    );
 
     addCortexM4ZigHarness(
         b,
@@ -371,6 +391,32 @@ pub fn build(b: *std.Build) void {
         "harness/fuzz/zig/control_flow_fuzz_harness.zig",
         &.{.{ .name = "control_flow", .module = control_flow_m4 }},
         "control-flow-fuzz-harness-zig-m4.elf",
+        mps2_an386,
+        optimize,
+        fuzz_harness_step,
+    );
+    addCortexM4ZigHarness(
+        b,
+        "combined-fuzz-harness-zig-m4",
+        "harness/fuzz/zig/combined_fuzz_harness.zig",
+        &.{
+            .{ .name = "tmr", .module = tmr_m4 },
+            .{ .name = "checker", .module = checker_m4 },
+            .{ .name = "checkpoint", .module = checkpoint_m4 },
+            .{ .name = "recovery_block", .module = recovery_block_m4 },
+            .{ .name = "control_flow", .module = control_flow_m4 },
+        },
+        "combined-fuzz-harness-zig-m4.elf",
+        mps2_an386,
+        optimize,
+        fuzz_harness_step,
+    );
+    addCortexM4ZigHarness(
+        b,
+        "baseline-fuzz-harness-zig-m4",
+        "harness/fuzz/zig/baseline_fuzz_harness.zig",
+        &.{},
+        "baseline-fuzz-harness-zig-m4.elf",
         mps2_an386,
         optimize,
         fuzz_harness_step,
