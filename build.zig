@@ -147,6 +147,26 @@ pub fn build(b: *std.Build) void {
         optimize,
         harness_step,
     );
+    addCortexM4CHarness(
+        b,
+        "combined-harness-c-m4",
+        "harness/e2e/c/combined_harness.c",
+        &.{ "harness/common", "c/tmr", "c/checker", "c/checkpoint", "c/recovery_block", "c/control_flow" },
+        "combined-harness-c-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+    addCortexM4CHarness(
+        b,
+        "baseline-harness-c-m4",
+        "harness/e2e/c/baseline_harness.c",
+        &.{"harness/common"},
+        "baseline-harness-c-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
 
     const harness_abi_m4 = makeZigModule(
         b,
@@ -233,6 +253,35 @@ pub fn build(b: *std.Build) void {
             .{ .name = "abi", .module = harness_abi_m4 },
         },
         "control-flow-harness-zig-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+    addCortexM4ZigHarness(
+        b,
+        "combined-harness-zig-m4",
+        "harness/e2e/zig/combined_harness.zig",
+        &.{
+            .{ .name = "tmr", .module = tmr_m4 },
+            .{ .name = "checker", .module = checker_m4 },
+            .{ .name = "checkpoint", .module = checkpoint_m4 },
+            .{ .name = "recovery_block", .module = recovery_block_m4 },
+            .{ .name = "control_flow", .module = control_flow_m4 },
+            .{ .name = "abi", .module = harness_abi_m4 },
+        },
+        "combined-harness-zig-m4.elf",
+        mps2_an386,
+        optimize,
+        harness_step,
+    );
+    addCortexM4ZigHarness(
+        b,
+        "baseline-harness-zig-m4",
+        "harness/e2e/zig/baseline_harness.zig",
+        &.{
+            .{ .name = "abi", .module = harness_abi_m4 },
+        },
+        "baseline-harness-zig-m4.elf",
         mps2_an386,
         optimize,
         harness_step,
