@@ -44,6 +44,7 @@ typedef struct {
   uint64_t trial_seed;
   uint32_t trial_id;
   uint64_t max_instructions;
+  uint64_t window_skip_bound;
   uint64_t entry_pc;
   uint64_t text_start;
   uint64_t text_end;
@@ -78,6 +79,7 @@ typedef struct {
   uint64_t rng_state;
   uint64_t instructions_executed;
   uint64_t window_insns_seen;
+  uint64_t window_insns_total;
   uint64_t reg_inject_after;
   uint64_t insn_skip_after;
   size_t selected_reg;
@@ -329,13 +331,26 @@ static bool write_register_u32(struct qemu_plugin_register *handle,
   return qemu_plugin_write_register(handle, bytes) > 0;
 }
 
+// window_skip_offset draws the 1-based index of the windowed instruction at
+// which to inject. The bound comes from the manifest's measured window length
+// (window_skip_bound); when absent it falls back to 16. Shared by the
+// register-bitflip and instruction-skip modes.
+static uint64_t window_skip_offset(void) {
+  uint64_t bound = g.config.window_skip_bound != 0 ? g.config.window_skip_bound
+                                                   : UINT64_C(16);
+  if (bound > UINT32_MAX) {
+    bound = UINT32_MAX;
+  }
+  return 1 + rng_bounded((uint32_t)bound);
+}
+
 static void prepare_register_fault(void) {
   if (g.reg_count == 0) {
     copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "no-register");
     return;
   }
   g.window_insns_seen = 0;
-  g.reg_inject_after = 1 + rng_bounded(16);
+  g.reg_inject_after = window_skip_offset();
   g.selected_reg = rng_bounded((uint32_t)g.reg_count);
   g.fault.bit = rng_bounded(32);
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg-pending");
@@ -389,7 +404,7 @@ static void prepare_insn_skip(void) {
     return;
   }
   g.window_insns_seen = 0;
-  g.insn_skip_after = 1 + rng_bounded(16);
+  g.insn_skip_after = window_skip_offset();
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "insn-skip-pending");
   copy_str(g.fault.target_name, sizeof(g.fault.target_name), "pc");
 }
@@ -479,6 +494,7 @@ static void write_raw_result(const char *plugin_status) {
   fprintf(file, "bit=%" PRIu32 "\n", g.fault.bit);
   fprintf(file, "before=%" PRIu32 "\n", g.fault.before);
   fprintf(file, "after=%" PRIu32 "\n", g.fault.after);
+  fprintf(file, "window_insns_total=%" PRIu64 "\n", g.window_insns_total);
   fprintf(file, "instructions_executed=%" PRIu64 "\n", g.instructions_executed);
   fprintf(file, "instruction_budget_exhausted=%u\n",
           g.instruction_budget_exhausted ? 1u : 0u);
@@ -534,6 +550,10 @@ static void handle_fault_window(uint64_t pc, uint64_t size) {
   }
 
   if (open != 0u) {
+    // Counts every instruction executed while the window is open, independent
+    // of mode or injection. With fault_mode=none this measures the clean
+    // window length used to bound windowed-offset campaigns.
+    g.window_insns_total += 1;
     maybe_inject_register_fault(pc);
     maybe_inject_insn_skip(pc, size);
   } else {
@@ -705,6 +725,9 @@ static bool parse_manifest_line(char *line, Config *config) {
   }
   if (strcmp(key, "max_instructions") == 0) {
     return parse_u64(value, &config->max_instructions);
+  }
+  if (strcmp(key, "window_skip_bound") == 0) {
+    return parse_u64(value, &config->window_skip_bound);
   }
   if (strcmp(key, "entry_pc") == 0) {
     return parse_u64(value, &config->entry_pc);

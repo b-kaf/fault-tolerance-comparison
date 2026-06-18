@@ -20,6 +20,7 @@ type Manifest struct {
 	FaultMode       string
 	FaultDomain     string
 	MaxInstructions uint64
+	WindowSkipBound uint64
 	RawResult       string
 	Done            string
 	EntryPC         uint64
@@ -40,6 +41,7 @@ func WriteManifest(path string, m Manifest) error {
 		"fault_mode=" + m.FaultMode,
 		"fault_domain=" + m.FaultDomain,
 		fmt.Sprintf("max_instructions=%d", m.MaxInstructions),
+		fmt.Sprintf("window_skip_bound=%d", m.WindowSkipBound),
 		"raw_result=" + m.RawResult,
 		"done=" + m.Done,
 		fmt.Sprintf("entry_pc=0x%x", m.EntryPC),

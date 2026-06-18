@@ -17,6 +17,11 @@ type Campaign struct {
 	RequiresInjection    bool
 	RequiresFuzzSymbols  bool
 	RequiresOneInsnPerTB bool
+	// UsesWindowOffset marks modes that pick the Nth executed instruction in
+	// the fault window as the injection point. Their offset is drawn from a
+	// fixed range, so with more trials than range slots they collide by
+	// pigeonhole; these campaigns get a measured window-length bound instead.
+	UsesWindowOffset bool
 }
 
 var CampaignChoices = []string{"none", "ram-bitflip", "reg-bitflip", "insn-skip"}
@@ -35,6 +40,7 @@ var campaigns = map[string]Campaign{
 		FaultMode:         "reg-bitflip",
 		FaultDomain:       "register",
 		RequiresInjection: true,
+		UsesWindowOffset:  true,
 	},
 	"insn-skip": {
 		Name:                 "insn-skip",
@@ -42,6 +48,7 @@ var campaigns = map[string]Campaign{
 		FaultDomain:          "instruction",
 		RequiresInjection:    true,
 		RequiresOneInsnPerTB: true,
+		UsesWindowOffset:     true,
 	},
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
@@ -95,20 +96,41 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 	}
 	defer os.RemoveAll(tmpDir)
 
-	for trialID := 0; trialID < cfg.Trials; trialID++ {
-		if ctx.Err() != nil {
-			return summary, rows, ctx.Err()
-		}
-		trialSeed := DeriveTrialSeed(cfg.Seed, trialID, cfg.Technique, cfg.Language, cfg.Campaign)
-		row, err := runOneTrial(ctx, cfg, spec, trialParams{
+	// Windowed-offset campaigns pick the Nth executed instruction in the fault
+	// window from a bounded range. Measure the clean window length once (the
+	// window is data-independent, so it is identical across trials) and use it
+	// as the bound, so trials spread across the whole window instead of
+	// colliding within the plugin's fixed fallback range.
+	var windowSkipBound uint64
+	if spec.UsesWindowOffset {
+		windowSkipBound, err = measureWindowLength(ctx, cfg, spec, trialParams{
 			tmpDir:      tmpDir,
 			abiSymbols:  abiSymbols,
 			fuzzSymbols: fuzzSymbols,
 			entryPC:     entryPC,
 			textStart:   textStart,
 			textEnd:     textEnd,
-			trialID:     trialID,
-			trialSeed:   trialSeed,
+		}, warnings)
+		if err != nil {
+			return summary, nil, err
+		}
+	}
+
+	for trialID := 0; trialID < cfg.Trials; trialID++ {
+		if ctx.Err() != nil {
+			return summary, rows, ctx.Err()
+		}
+		trialSeed := DeriveTrialSeed(cfg.Seed, trialID, cfg.Technique, cfg.Language, cfg.Campaign)
+		row, err := runOneTrial(ctx, cfg, spec, trialParams{
+			tmpDir:          tmpDir,
+			abiSymbols:      abiSymbols,
+			fuzzSymbols:     fuzzSymbols,
+			entryPC:         entryPC,
+			textStart:       textStart,
+			textEnd:         textEnd,
+			trialID:         trialID,
+			trialSeed:       trialSeed,
+			windowSkipBound: windowSkipBound,
 		}, warnings)
 		if err != nil {
 			return summary, rows, err
@@ -124,14 +146,15 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 }
 
 type trialParams struct {
-	tmpDir      string
-	abiSymbols  []harnesself.Symbol
-	fuzzSymbols []harnesself.Symbol
-	entryPC     uint64
-	textStart   uint64
-	textEnd     uint64
-	trialID     int
-	trialSeed   uint64
+	tmpDir          string
+	abiSymbols      []harnesself.Symbol
+	fuzzSymbols     []harnesself.Symbol
+	entryPC         uint64
+	textStart       uint64
+	textEnd         uint64
+	trialID         int
+	trialSeed       uint64
+	windowSkipBound uint64
 }
 
 func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialParams, warnings io.Writer) (map[string]string, error) {
@@ -149,6 +172,7 @@ func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialPar
 		FaultMode:       spec.FaultMode,
 		FaultDomain:     spec.FaultDomain,
 		MaxInstructions: cfg.MaxInstructions,
+		WindowSkipBound: p.windowSkipBound,
 		RawResult:       rawResultPath,
 		Done:            donePath,
 		EntryPC:         p.entryPC,
@@ -185,6 +209,52 @@ func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialPar
 		resultClass, facts,
 		process.ProcessStatus, process.Timeout, process.ElapsedMS,
 	), nil
+}
+
+// measureWindowLength runs one fault-free trial (fault_mode=none) so the plugin
+// counts every instruction executed while the fault window is open without
+// perturbing the path. The clean length bounds the per-trial skip offset for
+// windowed-offset campaigns. A zero result (window never opened, or the field
+// is absent) leaves the bound unset so the plugin keeps its built-in fallback.
+func measureWindowLength(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialParams, warnings io.Writer) (uint64, error) {
+	manifestPath := filepath.Join(p.tmpDir, "manifest-probe.txt")
+	rawResultPath := filepath.Join(p.tmpDir, "raw-probe.txt")
+	donePath := filepath.Join(p.tmpDir, "done-probe")
+
+	err := WriteManifest(manifestPath, Manifest{
+		Technique:       cfg.Technique,
+		Implementation:  cfg.Language,
+		Campaign:        cfg.Campaign,
+		CampaignSeed:    cfg.Seed,
+		FaultMode:       "none",
+		FaultDomain:     "none",
+		MaxInstructions: cfg.MaxInstructions,
+		RawResult:       rawResultPath,
+		Done:            donePath,
+		EntryPC:         p.entryPC,
+		TextStart:       p.textStart,
+		TextEnd:         p.textEnd,
+		ABISymbols:      p.abiSymbols,
+		FuzzSymbols:     p.fuzzSymbols,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	if _, err := RunQemuTrial(ctx, qemu.Binary, cfg.Elf, cfg.Plugin,
+		manifestPath, donePath, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings); err != nil {
+		return 0, err
+	}
+
+	facts, err := parseRawResult(rawResultPath)
+	if err != nil {
+		return 0, err
+	}
+	total, err := strconv.ParseUint(facts["window_insns_total"], 10, 64)
+	if err != nil {
+		return 0, nil // older plugin or empty result: fall back to plugin default
+	}
+	return total, nil
 }
 
 // parseRawResult mirrors main.parse_raw_result: key=value lines, comments
