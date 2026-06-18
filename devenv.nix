@@ -18,6 +18,7 @@ in
     pkgs.nixfmt
     pkgs.llvmPackages.bintools
     pkgs.qemu
+    pkgs.marp-cli
     qemuFtFuzzPlugin
   ];
 
@@ -43,6 +44,7 @@ in
   scripts.harness-build.exec = ''
     zig build harness
   '';
+
   scripts.harness-tui.exec = ''
     set -eu
 

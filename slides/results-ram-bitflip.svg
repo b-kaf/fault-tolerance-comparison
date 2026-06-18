@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 430" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <!-- title -->
+  <text x="20" y="34" font-size="26" font-weight="700" fill="#222">ram-bitflip · zig · 20 trials</text>
+
+  <!-- Combined bar -->
+  <text x="150" y="162" font-size="20" font-weight="600" fill="#333" text-anchor="end">combined</text>
+  <rect x="160" y="120" width="312" height="70" fill="#43a047"/>
+  <rect x="472" y="120" width="234" height="70" fill="#1e88e5"/>
+  <rect x="706" y="120" width="234" height="70" fill="#fb8c00"/>
+  <text x="316" y="163" font-size="20" font-weight="700" fill="#fff" text-anchor="middle">8</text>
+  <text x="589" y="163" font-size="20" font-weight="700" fill="#fff" text-anchor="middle">6</text>
+  <text x="823" y="163" font-size="20" font-weight="700" fill="#fff" text-anchor="middle">6</text>
+
+  <!-- Baseline bar -->
+  <text x="150" y="282" font-size="20" font-weight="600" fill="#333" text-anchor="end">baseline</text>
+  <rect x="160" y="240" width="351" height="70" fill="#43a047"/>
+  <rect x="511" y="240" width="429" height="70" fill="#e53935"/>
+  <text x="335" y="283" font-size="20" font-weight="700" fill="#fff" text-anchor="middle">9</text>
+  <text x="725" y="283" font-size="20" font-weight="700" fill="#fff" text-anchor="middle">11</text>
+
+  <!-- legend -->
+  <rect x="160" y="360" width="22" height="22" fill="#43a047"/>
+  <text x="190" y="377" font-size="18" fill="#333">passed</text>
+  <rect x="300" y="360" width="22" height="22" fill="#1e88e5"/>
+  <text x="330" y="377" font-size="18" fill="#333">corrected</text>
+  <rect x="470" y="360" width="22" height="22" fill="#fb8c00"/>
+  <text x="500" y="377" font-size="18" fill="#333">fail_safe</text>
+  <rect x="640" y="360" width="22" height="22" fill="#e53935"/>
+  <text x="670" y="377" font-size="18" fill="#333">sdc (silent data corruption)</text>
+</svg>
