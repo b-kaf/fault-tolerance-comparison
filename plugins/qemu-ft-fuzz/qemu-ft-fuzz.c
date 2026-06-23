@@ -38,8 +38,6 @@ typedef struct {
   char campaign[64];
   char fault_mode[64];
   char fault_domain[32];
-  char raw_result_path[512];
-  char done_path[512];
   uint64_t campaign_seed;
   uint64_t trial_seed;
   uint32_t trial_id;
@@ -331,6 +329,10 @@ static bool write_register_u32(struct qemu_plugin_register *handle,
   return qemu_plugin_write_register(handle, bytes) > 0;
 }
 
+// Defined later (alongside the result emitter); streams the injection-site
+// keys as soon as a fault lands so an aborting trial still records them.
+static void emit_fault_location(void);
+
 // window_skip_offset draws the 1-based index of the windowed instruction at
 // which to inject. The bound comes from the manifest's measured window length
 // (window_skip_bound); when absent it falls back to 16. Shared by the
@@ -396,6 +398,7 @@ static void maybe_inject_register_fault(uint64_t pc) {
 
   g.fault.injected = true;
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "reg");
+  emit_fault_location();
 }
 
 static void prepare_insn_skip(void) {
@@ -447,60 +450,84 @@ static void maybe_inject_insn_skip(uint64_t pc, uint64_t size) {
 
   g.fault.injected = true;
   copy_str(g.fault.target_kind, sizeof(g.fault.target_kind), "insn-skip");
+  emit_fault_location();
+}
+
+// FT_RESULT_TAG prefixes every result key=value line on stderr; FT_RESULT_END
+// is the sentinel marking a complete record. The Go runner scans the captured
+// QEMU stderr for these (see fuzz.parseStderrFacts / RunQemuTrial) instead of
+// reading a per-trial result file.
+#define FT_RESULT_TAG "@@FT "
+#define FT_RESULT_END "@@FT-END"
+
+// emit_fault_location streams just the injection-site keys the moment a fault
+// lands, so a trial that later aborts (e.g. a Cortex-M lockup -> SIGABRT)
+// still reports where it skipped. The final record re-emits these; the Go
+// side merges @@FT lines last-wins, so the duplicate is harmless.
+static void emit_fault_location(void) {
+  fprintf(stderr, FT_RESULT_TAG "injected=%u\n", g.fault.injected ? 1u : 0u);
+  fprintf(stderr, FT_RESULT_TAG "target_kind=%s\n", g.fault.target_kind);
+  fprintf(stderr, FT_RESULT_TAG "target_name=%s\n", g.fault.target_name);
+  fprintf(stderr, FT_RESULT_TAG "target_addr=0x%" PRIx64 "\n",
+          g.fault.target_addr);
+  fprintf(stderr, FT_RESULT_TAG "inject_pc=0x%" PRIx64 "\n", g.fault.inject_pc);
+  fprintf(stderr, FT_RESULT_TAG "inject_offset=%" PRIu64 "\n",
+          g.fault.inject_offset);
+  fflush(stderr);
 }
 
 static void write_raw_result(const char *plugin_status) {
-  if (g.raw_result_written || g.config.raw_result_path[0] == '\0') {
+  if (g.raw_result_written) {
     return;
   }
 
-  FILE *file = fopen(g.config.raw_result_path, "w");
-  if (file == NULL) {
-    plugin_log2("qemu-ft-fuzz: could not open raw result: ",
-                g.config.raw_result_path);
-    return;
-  }
-
-  fprintf(file, "technique=%s\n", g.config.technique);
-  fprintf(file, "implementation=%s\n", g.config.language);
-  fprintf(file, "campaign=%s\n", g.config.campaign);
-  fprintf(file, "campaign_seed=0x%" PRIx64 "\n", g.config.campaign_seed);
-  fprintf(file, "trial_id=%" PRIu32 "\n", g.config.trial_id);
-  fprintf(file, "trial_seed=0x%" PRIx64 "\n", g.config.trial_seed);
-  fprintf(file, "harness_done=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "technique=%s\n", g.config.technique);
+  fprintf(stderr, FT_RESULT_TAG "implementation=%s\n", g.config.language);
+  fprintf(stderr, FT_RESULT_TAG "campaign=%s\n", g.config.campaign);
+  fprintf(stderr, FT_RESULT_TAG "campaign_seed=0x%" PRIx64 "\n",
+          g.config.campaign_seed);
+  fprintf(stderr, FT_RESULT_TAG "trial_id=%" PRIu32 "\n", g.config.trial_id);
+  fprintf(stderr, FT_RESULT_TAG "trial_seed=0x%" PRIx64 "\n",
+          g.config.trial_seed);
+  fprintf(stderr, FT_RESULT_TAG "harness_done=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_done"));
-  fprintf(file, "harness_detected=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "harness_detected=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_detected"));
-  fprintf(file, "harness_corrected=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "harness_corrected=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_corrected"));
-  fprintf(file, "harness_safe_state=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "harness_safe_state=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_safe_state"));
-  fprintf(file, "harness_output=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "harness_output=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_output"));
-  fprintf(file, "harness_expected=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "harness_expected=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_expected"));
-  fprintf(file, "harness_error_code=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "harness_error_code=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_error_code"));
-  fprintf(file, "harness_fault_window_open=%" PRIu32 "\n",
+  fprintf(stderr, FT_RESULT_TAG "harness_fault_window_open=%" PRIu32 "\n",
           read_symbol_u32_or_zero("harness_fault_window_open"));
-  fprintf(file, "injected=%u\n", g.fault.injected ? 1u : 0u);
-  fprintf(file, "fault_mode=%s\n", g.fault.fault_mode);
-  fprintf(file, "fault_domain=%s\n", g.config.fault_domain);
-  fprintf(file, "target_kind=%s\n", g.fault.target_kind);
-  fprintf(file, "target_name=%s\n", g.fault.target_name);
-  fprintf(file, "target_addr=0x%" PRIx64 "\n", g.fault.target_addr);
-  fprintf(file, "inject_pc=0x%" PRIx64 "\n", g.fault.inject_pc);
-  fprintf(file, "inject_offset=%" PRIu64 "\n", g.fault.inject_offset);
-  fprintf(file, "bit=%" PRIu32 "\n", g.fault.bit);
-  fprintf(file, "before=%" PRIu32 "\n", g.fault.before);
-  fprintf(file, "after=%" PRIu32 "\n", g.fault.after);
-  fprintf(file, "window_insns_total=%" PRIu64 "\n", g.window_insns_total);
-  fprintf(file, "instructions_executed=%" PRIu64 "\n", g.instructions_executed);
-  fprintf(file, "instruction_budget_exhausted=%u\n",
+  fprintf(stderr, FT_RESULT_TAG "injected=%u\n", g.fault.injected ? 1u : 0u);
+  fprintf(stderr, FT_RESULT_TAG "fault_mode=%s\n", g.fault.fault_mode);
+  fprintf(stderr, FT_RESULT_TAG "fault_domain=%s\n", g.config.fault_domain);
+  fprintf(stderr, FT_RESULT_TAG "target_kind=%s\n", g.fault.target_kind);
+  fprintf(stderr, FT_RESULT_TAG "target_name=%s\n", g.fault.target_name);
+  fprintf(stderr, FT_RESULT_TAG "target_addr=0x%" PRIx64 "\n",
+          g.fault.target_addr);
+  fprintf(stderr, FT_RESULT_TAG "inject_pc=0x%" PRIx64 "\n", g.fault.inject_pc);
+  fprintf(stderr, FT_RESULT_TAG "inject_offset=%" PRIu64 "\n",
+          g.fault.inject_offset);
+  fprintf(stderr, FT_RESULT_TAG "bit=%" PRIu32 "\n", g.fault.bit);
+  fprintf(stderr, FT_RESULT_TAG "before=%" PRIu32 "\n", g.fault.before);
+  fprintf(stderr, FT_RESULT_TAG "after=%" PRIu32 "\n", g.fault.after);
+  fprintf(stderr, FT_RESULT_TAG "window_insns_total=%" PRIu64 "\n",
+          g.window_insns_total);
+  fprintf(stderr, FT_RESULT_TAG "instructions_executed=%" PRIu64 "\n",
+          g.instructions_executed);
+  fprintf(stderr, FT_RESULT_TAG "instruction_budget_exhausted=%u\n",
           g.instruction_budget_exhausted ? 1u : 0u);
-  fprintf(file, "qemu_plugin_api=%d\n", QEMU_PLUGIN_VERSION);
-  fprintf(file, "plugin_status=%s\n", plugin_status);
-  fclose(file);
+  fprintf(stderr, FT_RESULT_TAG "qemu_plugin_api=%d\n", QEMU_PLUGIN_VERSION);
+  fprintf(stderr, FT_RESULT_TAG "plugin_status=%s\n", plugin_status);
+  fprintf(stderr, FT_RESULT_END "\n");
+  fflush(stderr);
   g.raw_result_written = true;
 }
 
@@ -509,13 +536,6 @@ static void mark_done(void) {
     return;
   }
   g.done = true;
-  if (g.config.done_path[0] != '\0') {
-    FILE *done = fopen(g.config.done_path, "w");
-    if (done != NULL) {
-      fprintf(done, "done=1\n");
-      fclose(done);
-    }
-  }
 }
 
 static void ensure_seed_written(uint64_t pc) {
@@ -701,14 +721,6 @@ static bool parse_manifest_line(char *line, Config *config) {
     copy_str(config->fault_domain, sizeof(config->fault_domain), value);
     return true;
   }
-  if (strcmp(key, "raw_result") == 0) {
-    copy_str(config->raw_result_path, sizeof(config->raw_result_path), value);
-    return true;
-  }
-  if (strcmp(key, "done") == 0) {
-    copy_str(config->done_path, sizeof(config->done_path), value);
-    return true;
-  }
   if (strcmp(key, "campaign_seed") == 0) {
     return parse_u64(value, &config->campaign_seed);
   }
@@ -783,8 +795,7 @@ static bool parse_manifest(const char *path, Config *config) {
 static bool validate_config(const Config *config) {
   if (config->technique[0] == '\0' || config->language[0] == '\0' ||
       config->campaign[0] == '\0' || config->fault_mode[0] == '\0' ||
-      config->fault_domain[0] == '\0' || config->raw_result_path[0] == '\0' ||
-      config->done_path[0] == '\0' || config->entry_pc == 0 ||
+      config->fault_domain[0] == '\0' || config->entry_pc == 0 ||
       config->text_end <= config->text_start) {
     plugin_log("qemu-ft-fuzz: manifest missing required single-shot fields\n");
     return false;
@@ -825,7 +836,27 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
     return -1;
   }
 
-  if (!parse_manifest(manifest, &g.config) || !validate_config(&g.config)) {
+  if (!parse_manifest(manifest, &g.config)) {
+    return -1;
+  }
+
+  // Overlay per-trial key=value plugin args (trial_seed, trial_id,
+  // window_skip_bound, and fault_mode for the probe) on top of the
+  // campaign-static manifest, reusing the manifest line parser. manifest= is
+  // consumed above; file= is stripped by QEMU and never reaches argv.
+  for (int i = 0; i < argc; i++) {
+    if (strncmp(argv[i], "manifest=", 9) == 0) {
+      continue;
+    }
+    char arg[256];
+    copy_str(arg, sizeof(arg), argv[i]);
+    if (!parse_manifest_line(arg, &g.config)) {
+      plugin_log2("qemu-ft-fuzz: invalid plugin arg: ", argv[i]);
+      return -1;
+    }
+  }
+
+  if (!validate_config(&g.config)) {
     return -1;
   }
 

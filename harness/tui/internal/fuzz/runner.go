@@ -4,21 +4,27 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/qemu"
 )
 
-// ProcessResult mirrors runner.ProcessResult.
+// ProcessResult mirrors runner.ProcessResult. Stderr is everything the QEMU
+// child wrote to stderr, which carries the plugin's @@FT result record.
 type ProcessResult struct {
 	ProcessStatus string
 	Timeout       bool
 	ElapsedMS     int64
+	Stderr        string
 }
 
 const terminateTimeout = 2 * time.Second
+
+// resultSentinel marks a complete @@FT result record on the plugin's stderr;
+// its appearance is the completion signal (the plugin keeps QEMU running, so
+// the runner terminates the process once it sees this).
+const resultSentinel = "@@FT-END"
 
 // RunQemuTrial mirrors runner.run_qemu_trial: launch QEMU with the plugin,
 // poll for the done flag (checked before process exit, since QEMU keeps
@@ -28,9 +34,12 @@ const terminateTimeout = 2 * time.Second
 // oneInsnPerTB appends -accel tcg,one-insn-per-tb=on, required by the insn-skip
 // campaign so a mid-TB PC write removes exactly one instruction; it is gated
 // per-campaign because it slows emulation and other modes do not need it.
-func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest, done string, timeout time.Duration, oneInsnPerTB bool, warnings io.Writer) (ProcessResult, error) {
-	argv := append(qemu.BaseCommand(qemuBin, elfPath),
-		"-plugin", fmt.Sprintf("file=%s,manifest=%s", plugin, manifest))
+func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest string, pluginArgs []string, timeout time.Duration, oneInsnPerTB bool, warnings io.Writer) (ProcessResult, error) {
+	pluginSpec := fmt.Sprintf("file=%s,manifest=%s", plugin, manifest)
+	if len(pluginArgs) > 0 {
+		pluginSpec += "," + strings.Join(pluginArgs, ",")
+	}
+	argv := append(qemu.BaseCommand(qemuBin, elfPath), "-plugin", pluginSpec)
 	if oneInsnPerTB {
 		argv = append(argv, "-accel", "tcg,one-insn-per-tb=on")
 	}
@@ -54,14 +63,16 @@ func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest, done 
 				ProcessStatus: "cancelled",
 				Timeout:       false,
 				ElapsedMS:     time.Since(start).Milliseconds(),
+				Stderr:        proc.Stderr(),
 			}, ctx.Err()
 		}
-		if _, err := os.Stat(done); err == nil {
+		if strings.Contains(proc.Stderr(), resultSentinel) {
 			proc.Terminate(terminateTimeout)
 			return ProcessResult{
 				ProcessStatus: "completed",
 				Timeout:       false,
 				ElapsedMS:     time.Since(start).Milliseconds(),
+				Stderr:        proc.Stderr(),
 			}, nil
 		}
 		if proc.Exited() {
@@ -71,6 +82,7 @@ func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest, done 
 				ProcessStatus: fmt.Sprintf("exit:%d", status),
 				Timeout:       false,
 				ElapsedMS:     time.Since(start).Milliseconds(),
+				Stderr:        proc.Stderr(),
 			}, nil
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -82,6 +94,7 @@ func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest, done 
 		ProcessStatus: "timeout",
 		Timeout:       true,
 		ElapsedMS:     time.Since(start).Milliseconds(),
+		Stderr:        proc.Stderr(),
 	}, nil
 }
 

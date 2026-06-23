@@ -96,6 +96,27 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// The manifest is campaign-static (symbols, text range, fault mode), so it
+	// is written once; the per-trial deltas (seed, id, window bound) ride as
+	// plugin args instead of a fresh file per trial.
+	manifestPath := filepath.Join(tmpDir, "manifest.txt")
+	if err := WriteManifest(manifestPath, Manifest{
+		Technique:       cfg.Technique,
+		Implementation:  cfg.Language,
+		Campaign:        cfg.Campaign,
+		CampaignSeed:    cfg.Seed,
+		FaultMode:       spec.FaultMode,
+		FaultDomain:     spec.FaultDomain,
+		MaxInstructions: cfg.MaxInstructions,
+		EntryPC:         entryPC,
+		TextStart:       textStart,
+		TextEnd:         textEnd,
+		ABISymbols:      abiSymbols,
+		FuzzSymbols:     fuzzSymbols,
+	}); err != nil {
+		return summary, nil, err
+	}
+
 	// Windowed-offset campaigns pick the Nth executed instruction in the fault
 	// window from a bounded range. Measure the clean window length once (the
 	// window is data-independent, so it is identical across trials) and use it
@@ -103,14 +124,7 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 	// colliding within the plugin's fixed fallback range.
 	var windowSkipBound uint64
 	if spec.UsesWindowOffset {
-		windowSkipBound, err = measureWindowLength(ctx, cfg, spec, trialParams{
-			tmpDir:      tmpDir,
-			abiSymbols:  abiSymbols,
-			fuzzSymbols: fuzzSymbols,
-			entryPC:     entryPC,
-			textStart:   textStart,
-			textEnd:     textEnd,
-		}, warnings)
+		windowSkipBound, err = measureWindowLength(ctx, cfg, spec, manifestPath, warnings)
 		if err != nil {
 			return summary, nil, err
 		}
@@ -121,17 +135,7 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 			return summary, rows, ctx.Err()
 		}
 		trialSeed := DeriveTrialSeed(cfg.Seed, trialID, cfg.Technique, cfg.Language, cfg.Campaign)
-		row, err := runOneTrial(ctx, cfg, spec, trialParams{
-			tmpDir:          tmpDir,
-			abiSymbols:      abiSymbols,
-			fuzzSymbols:     fuzzSymbols,
-			entryPC:         entryPC,
-			textStart:       textStart,
-			textEnd:         textEnd,
-			trialID:         trialID,
-			trialSeed:       trialSeed,
-			windowSkipBound: windowSkipBound,
-		}, warnings)
+		row, err := runOneTrial(ctx, cfg, spec, manifestPath, trialID, trialSeed, windowSkipBound, warnings)
 		if err != nil {
 			return summary, rows, err
 		}
@@ -145,56 +149,20 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 	return summary, rows, nil
 }
 
-type trialParams struct {
-	tmpDir          string
-	abiSymbols      []harnesself.Symbol
-	fuzzSymbols     []harnesself.Symbol
-	entryPC         uint64
-	textStart       uint64
-	textEnd         uint64
-	trialID         int
-	trialSeed       uint64
-	windowSkipBound uint64
-}
-
-func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialParams, warnings io.Writer) (map[string]string, error) {
-	manifestPath := filepath.Join(p.tmpDir, fmt.Sprintf("manifest-%d.txt", p.trialID))
-	rawResultPath := filepath.Join(p.tmpDir, fmt.Sprintf("raw-%d.txt", p.trialID))
-	donePath := filepath.Join(p.tmpDir, fmt.Sprintf("done-%d", p.trialID))
-
-	err := WriteManifest(manifestPath, Manifest{
-		Technique:       cfg.Technique,
-		Implementation:  cfg.Language,
-		Campaign:        cfg.Campaign,
-		CampaignSeed:    cfg.Seed,
-		TrialID:         p.trialID,
-		TrialSeed:       p.trialSeed,
-		FaultMode:       spec.FaultMode,
-		FaultDomain:     spec.FaultDomain,
-		MaxInstructions: cfg.MaxInstructions,
-		WindowSkipBound: p.windowSkipBound,
-		RawResult:       rawResultPath,
-		Done:            donePath,
-		EntryPC:         p.entryPC,
-		TextStart:       p.textStart,
-		TextEnd:         p.textEnd,
-		ABISymbols:      p.abiSymbols,
-		FuzzSymbols:     p.fuzzSymbols,
-	})
-	if err != nil {
-		return nil, err
+func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, manifestPath string, trialID int, trialSeed, windowSkipBound uint64, warnings io.Writer) (map[string]string, error) {
+	pluginArgs := []string{
+		fmt.Sprintf("trial_seed=0x%x", trialSeed),
+		fmt.Sprintf("trial_id=%d", trialID),
+		fmt.Sprintf("window_skip_bound=%d", windowSkipBound),
 	}
 
 	process, err := RunQemuTrial(ctx, qemu.Binary, cfg.Elf, cfg.Plugin,
-		manifestPath, donePath, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings)
+		manifestPath, pluginArgs, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings)
 	if err != nil {
 		return nil, err
 	}
 
-	facts, err := parseRawResult(rawResultPath)
-	if err != nil {
-		return nil, err
-	}
+	facts := parseStderrFacts(process.Stderr)
 
 	resultClass := Classify(ClassificationInput{
 		Facts:             facts,
@@ -204,7 +172,7 @@ func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialPar
 	})
 	return result.FormatFuzzResultRow(
 		cfg.Technique, cfg.Language,
-		p.trialID, p.trialSeed,
+		trialID, trialSeed,
 		cfg.Campaign, cfg.Seed,
 		resultClass, facts,
 		process.ProcessStatus, process.Timeout, process.ElapsedMS,
@@ -216,65 +184,42 @@ func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialPar
 // perturbing the path. The clean length bounds the per-trial skip offset for
 // windowed-offset campaigns. A zero result (window never opened, or the field
 // is absent) leaves the bound unset so the plugin keeps its built-in fallback.
-func measureWindowLength(ctx context.Context, cfg config.Fuzz, spec Campaign, p trialParams, warnings io.Writer) (uint64, error) {
-	manifestPath := filepath.Join(p.tmpDir, "manifest-probe.txt")
-	rawResultPath := filepath.Join(p.tmpDir, "raw-probe.txt")
-	donePath := filepath.Join(p.tmpDir, "done-probe")
-
-	err := WriteManifest(manifestPath, Manifest{
-		Technique:       cfg.Technique,
-		Implementation:  cfg.Language,
-		Campaign:        cfg.Campaign,
-		CampaignSeed:    cfg.Seed,
-		FaultMode:       "none",
-		FaultDomain:     "none",
-		MaxInstructions: cfg.MaxInstructions,
-		RawResult:       rawResultPath,
-		Done:            donePath,
-		EntryPC:         p.entryPC,
-		TextStart:       p.textStart,
-		TextEnd:         p.textEnd,
-		ABISymbols:      p.abiSymbols,
-		FuzzSymbols:     p.fuzzSymbols,
-	})
+func measureWindowLength(ctx context.Context, cfg config.Fuzz, spec Campaign, manifestPath string, warnings io.Writer) (uint64, error) {
+	// A no-fault run: the fault window still opens, so the plugin counts every
+	// windowed instruction without perturbing the path. fault_mode=none
+	// overrides the campaign's mode in the shared manifest.
+	process, err := RunQemuTrial(ctx, qemu.Binary, cfg.Elf, cfg.Plugin,
+		manifestPath, []string{"fault_mode=none"}, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings)
 	if err != nil {
 		return 0, err
 	}
 
-	if _, err := RunQemuTrial(ctx, qemu.Binary, cfg.Elf, cfg.Plugin,
-		manifestPath, donePath, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings); err != nil {
-		return 0, err
-	}
-
-	facts, err := parseRawResult(rawResultPath)
-	if err != nil {
-		return 0, err
-	}
+	facts := parseStderrFacts(process.Stderr)
 	total, err := strconv.ParseUint(facts["window_insns_total"], 10, 64)
 	if err != nil {
-		return 0, nil // older plugin or empty result: fall back to plugin default
+		return 0, nil // window never opened / field absent: keep plugin default
 	}
 	return total, nil
 }
 
-// parseRawResult mirrors main.parse_raw_result: key=value lines, comments
-// and malformed lines skipped, missing file is empty facts.
-func parseRawResult(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]string{}, nil
-		}
-		return nil, err
-	}
+// parseStderrFacts extracts the plugin's result record from captured QEMU
+// stderr: each result line is "@@FT key=value". Non-tagged lines (QEMU's own
+// output) are ignored. Later values win, so injection-time keys emitted before
+// an abort are overridden by the final record when one is produced.
+func parseStderrFacts(stderr string) map[string]string {
+	const tag = "@@FT "
 	facts := make(map[string]string)
-	for line := range strings.Lines(string(data)) {
-		line = strings.TrimRight(line, "\n")
-		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+	for line := range strings.Lines(stderr) {
+		line = strings.TrimRight(line, "\r\n")
+		if !strings.HasPrefix(line, tag) {
 			continue
 		}
-		key, value, _ := strings.Cut(line, "=")
+		kv := line[len(tag):]
+		if !strings.Contains(kv, "=") {
+			continue
+		}
+		key, value, _ := strings.Cut(kv, "=")
 		facts[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
-	return facts, nil
+	return facts
 }

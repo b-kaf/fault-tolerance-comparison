@@ -10,19 +10,18 @@ import (
 
 // Manifest is the per-trial key=value file consumed by the QEMU plugin,
 // mirroring manifest.write_manifest. Line order is part of the format.
+// Manifest holds the campaign-static config the plugin reads once. Per-trial
+// values (trial_seed, trial_id, window_skip_bound) and the probe's fault_mode
+// override are passed as plugin args instead, so a single manifest serves the
+// whole campaign.
 type Manifest struct {
 	Technique       string
 	Implementation  string
 	Campaign        string
 	CampaignSeed    uint64
-	TrialID         int
-	TrialSeed       uint64
 	FaultMode       string
 	FaultDomain     string
 	MaxInstructions uint64
-	WindowSkipBound uint64
-	RawResult       string
-	Done            string
 	EntryPC         uint64
 	TextStart       uint64
 	TextEnd         uint64
@@ -36,14 +35,9 @@ func WriteManifest(path string, m Manifest) error {
 		"language=" + m.Implementation,
 		"campaign=" + m.Campaign,
 		fmt.Sprintf("campaign_seed=0x%x", m.CampaignSeed),
-		fmt.Sprintf("trial_id=%d", m.TrialID),
-		fmt.Sprintf("trial_seed=0x%x", m.TrialSeed),
 		"fault_mode=" + m.FaultMode,
 		"fault_domain=" + m.FaultDomain,
 		fmt.Sprintf("max_instructions=%d", m.MaxInstructions),
-		fmt.Sprintf("window_skip_bound=%d", m.WindowSkipBound),
-		"raw_result=" + m.RawResult,
-		"done=" + m.Done,
 		fmt.Sprintf("entry_pc=0x%x", m.EntryPC),
 		fmt.Sprintf("text_start=0x%x", m.TextStart),
 		fmt.Sprintf("text_end=0x%x", m.TextEnd),
