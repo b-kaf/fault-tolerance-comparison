@@ -12,7 +12,6 @@ import (
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
 	harnesself "github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/elf"
-	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/qemu"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/result"
 )
 
@@ -113,6 +112,7 @@ func Run(ctx context.Context, cfg config.Fuzz, warnings io.Writer, events Events
 		TextEnd:         textEnd,
 		ABISymbols:      abiSymbols,
 		FuzzSymbols:     fuzzSymbols,
+		GPRegisters:     cfg.Target.GPRegisters,
 	}); err != nil {
 		return summary, nil, err
 	}
@@ -156,7 +156,7 @@ func runOneTrial(ctx context.Context, cfg config.Fuzz, spec Campaign, manifestPa
 		fmt.Sprintf("window_skip_bound=%d", windowSkipBound),
 	}
 
-	process, err := RunQemuTrial(ctx, qemu.Binary, cfg.Elf, cfg.Plugin,
+	process, err := RunQemuTrial(ctx, cfg.Target, cfg.Elf, cfg.Plugin,
 		manifestPath, pluginArgs, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings)
 	if err != nil {
 		return nil, err
@@ -188,7 +188,7 @@ func measureWindowLength(ctx context.Context, cfg config.Fuzz, spec Campaign, ma
 	// A no-fault run: the fault window still opens, so the plugin counts every
 	// windowed instruction without perturbing the path. fault_mode=none
 	// overrides the campaign's mode in the shared manifest.
-	process, err := RunQemuTrial(ctx, qemu.Binary, cfg.Elf, cfg.Plugin,
+	process, err := RunQemuTrial(ctx, cfg.Target, cfg.Elf, cfg.Plugin,
 		manifestPath, []string{"fault_mode=none"}, cfg.Timeout, spec.RequiresOneInsnPerTB, warnings)
 	if err != nil {
 		return 0, err

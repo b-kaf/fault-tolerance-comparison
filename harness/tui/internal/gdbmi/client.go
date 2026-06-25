@@ -22,6 +22,7 @@ type Config struct {
 	Port           int
 	ConnectTimeout time.Duration
 	StopTimeout    time.Duration
+	GdbArch        string // gdb "set architecture" value; empty skips the hint
 }
 
 // commandTimeout bounds synchronous MI commands on a halted target. The
@@ -74,8 +75,10 @@ func (c *Client) setup(cfg Config) error {
 		return err
 	}
 	// set architecture is best-effort, matching allow_error=True.
-	if _, err := c.send(c.cmdTimeout, "interpreter-exec", "console", "set architecture armv7e-m"); err != nil {
-		return err
+	if cfg.GdbArch != "" {
+		if _, err := c.send(c.cmdTimeout, "interpreter-exec", "console", "set architecture "+cfg.GdbArch); err != nil {
+			return err
+		}
 	}
 	target := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	if _, err := c.checkedSend(cfg.ConnectTimeout, "target-select", "remote", target); err != nil {

@@ -12,25 +12,23 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/target"
 )
 
-const (
-	Binary  = "qemu-system-arm"
-	machine = "mps2-an386"
-	cpu     = "cortex-m4"
-)
-
-// BaseCommand mirrors support.qemu_mps2_an386_command.
-func BaseCommand(qemu, elf string) []string {
-	return []string{
-		qemu,
-		"-M", machine,
-		"-cpu", cpu,
+// BaseCommand builds the QEMU argv for a target profile: binary, machine, cpu,
+// the kernel ELF, and any target-specific extras (e.g. riscv virt's -bios none).
+func BaseCommand(p target.Profile, elf string) []string {
+	argv := []string{
+		p.QemuBinary,
+		"-M", p.Machine,
+		"-cpu", p.CPU,
 		"-kernel", elf,
 		"-nographic",
 		"-monitor", "none",
 		"-serial", "none",
 	}
+	return append(argv, p.ExtraQemu...)
 }
 
 // Process wraps a started child with captured stderr and a single reaper, so

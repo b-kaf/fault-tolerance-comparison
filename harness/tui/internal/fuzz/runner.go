@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/qemu"
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/target"
 )
 
 // ProcessResult mirrors runner.ProcessResult. Stderr is everything the QEMU
@@ -34,15 +35,19 @@ const resultSentinel = "@@FT-END"
 // oneInsnPerTB appends -accel tcg,one-insn-per-tb=on, required by the insn-skip
 // campaign so a mid-TB PC write removes exactly one instruction; it is gated
 // per-campaign because it slows emulation and other modes do not need it.
-func RunQemuTrial(ctx context.Context, qemuBin, elfPath, plugin, manifest string, pluginArgs []string, timeout time.Duration, oneInsnPerTB bool, warnings io.Writer) (ProcessResult, error) {
+func RunQemuTrial(ctx context.Context, profile target.Profile, elfPath, plugin, manifest string, pluginArgs []string, timeout time.Duration, oneInsnPerTB bool, warnings io.Writer) (ProcessResult, error) {
 	pluginSpec := fmt.Sprintf("file=%s,manifest=%s", plugin, manifest)
 	if len(pluginArgs) > 0 {
 		pluginSpec += "," + strings.Join(pluginArgs, ",")
 	}
-	argv := append(qemu.BaseCommand(qemuBin, elfPath), "-plugin", pluginSpec)
+	argv := qemu.BaseCommand(profile, elfPath)
+	// -accel must precede -plugin: on RISC-V, configuring one-insn-per-tb after
+	// the plugin loads leaves the plugin's vcpu_init register enumeration empty
+	// (no pc handle), breaking insn-skip. ARM tolerates either order.
 	if oneInsnPerTB {
 		argv = append(argv, "-accel", "tcg,one-insn-per-tb=on")
 	}
+	argv = append(argv, "-plugin", pluginSpec)
 
 	start := time.Now()
 	proc, err := qemu.Start(argv)

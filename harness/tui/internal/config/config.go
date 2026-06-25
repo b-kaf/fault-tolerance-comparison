@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/target"
 )
 
 const (
@@ -33,6 +35,7 @@ type E2E struct {
 	Elf                string
 	Host               string
 	Gdb                string
+	Target             target.Profile
 }
 
 // Fuzz mirrors the fuzz runner's RunConfig. The campaign spec itself lives in
@@ -48,6 +51,7 @@ type Fuzz struct {
 	MaxInstructions uint64
 	Plugin          string
 	Elf             string
+	Target          target.Profile
 }
 
 // Settings holds the tunable defaults previously supplied via .env / env vars.
