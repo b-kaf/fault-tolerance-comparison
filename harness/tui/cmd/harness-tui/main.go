@@ -52,13 +52,14 @@ func (c *tuiCmd) Run(e *env) error {
 type e2eCmd struct {
 	Technique  string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow,combined,baseline" default:"tmr"`
 	Language   string `help:"Harness implementation language." enum:"c,zig" required:""`
+	Target     string `help:"Target ISA/board." enum:"m4,rv32" default:"m4"`
 	Campaign   string `help:"Campaign name." default:"mixed"`
 	Iterations int    `help:"Iteration count (0 = the config.toml [e2e].iterations default)." default:"0"`
 	CSV        string `help:"Write results to this CSV path instead of stdout." placeholder:"PATH"`
 }
 
 func (c *e2eCmd) Run(e *env) error {
-	cfg, err := run.ResolveE2E(e.repoRoot, e.settings, c.Technique, c.Language, c.Campaign, c.Iterations, c.CSV)
+	cfg, err := run.ResolveE2E(e.repoRoot, e.settings, c.Technique, c.Language, c.Target, c.Campaign, c.Iterations, c.CSV)
 	if err != nil {
 		return err
 	}
@@ -82,6 +83,7 @@ func (c *e2eCmd) Run(e *env) error {
 type fuzzCmd struct {
 	Technique string `help:"Harness technique." enum:"tmr,checkpoint,recovery-block,control-flow,combined,baseline" default:"tmr"`
 	Language  string `help:"Harness implementation language." enum:"c,zig" required:""`
+	Target    string `help:"Target ISA/board." enum:"m4,rv32" default:"m4"`
 	Campaign  string `help:"Campaign name." default:"reg-bitflip"`
 	Trials    int    `help:"Trial count (0 = the config.toml [fuzz].trials default)." default:"0"`
 	Seed      string `help:"Campaign seed, u64 (empty = the config.toml [fuzz].seed default)."`
@@ -89,7 +91,7 @@ type fuzzCmd struct {
 }
 
 func (c *fuzzCmd) Run(e *env) error {
-	cfg, err := run.ResolveFuzz(e.repoRoot, e.settings, c.Technique, c.Language, c.Campaign, c.Trials, c.Seed, c.CSV)
+	cfg, err := run.ResolveFuzz(e.repoRoot, e.settings, c.Technique, c.Language, c.Target, c.Campaign, c.Trials, c.Seed, c.CSV)
 	if err != nil {
 		return err
 	}

@@ -12,7 +12,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
 #define MAX_SYMBOLS 128
 #define MAX_FUZZ_SYMBOLS 64
-#define MAX_REGS 16
+#define MAX_REGS 64
 
 typedef enum {
   MODE_NONE,
@@ -38,6 +38,7 @@ typedef struct {
   char campaign[64];
   char fault_mode[64];
   char fault_domain[32];
+  char gp_regs[512]; // comma-separated GP-register allowlist for reg-bitflip
   uint64_t campaign_seed;
   uint64_t trial_seed;
   uint32_t trial_id;
@@ -620,6 +621,9 @@ static void on_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
       continue;
     }
     size_t size = qemu_plugin_insn_size(insn);
+    // One bit encodes the instruction size: 4-byte (ARM 32-bit / RISC-V base)
+    // vs 2-byte (ARM Thumb / RISC-V compressed). Both ISAs only emit these two
+    // widths, so on_instruction reconstructs the exact size.
     uint64_t packed = (pc << 3) | (size == 4 ? 1u : 0u);
     enum qemu_plugin_cb_flags flags =
         (g.mode == MODE_REG_BITFLIP_WINDOW || g.mode == MODE_INSN_SKIP)
@@ -630,15 +634,24 @@ static void on_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
   }
 }
 
-static bool is_general_arm_reg(const char *name) {
-  if (name[0] != 'r') {
-    return false;
-  }
-  if (name[1] >= '0' && name[1] <= '9' && name[2] == '\0') {
-    return true;
-  }
-  if (name[1] == '1' && name[2] >= '0' && name[2] <= '2' && name[3] == '\0') {
-    return true;
+// gp_reg_allowed reports whether a register name is in the manifest's gp_regs
+// allowlist (a comma-separated list supplied per target, e.g. ARM "r0,..,r12"
+// or RISC-V "ra,t0,..,a0,..,s1,.."). Exact token match, so "r1" never matches
+// "r12". This replaces the old ARM-only name pattern so reg-bitflip works on any
+// ISA whose registers the QEMU plugin API exposes.
+static bool gp_reg_allowed(const char *name) {
+  size_t nlen = strlen(name);
+  const char *p = g.config.gp_regs;
+  while (*p != '\0') {
+    const char *comma = strchr(p, ',');
+    size_t tok = comma != NULL ? (size_t)(comma - p) : strlen(p);
+    if (tok == nlen && strncmp(p, name, nlen) == 0) {
+      return true;
+    }
+    if (comma == NULL) {
+      break;
+    }
+    p = comma + 1;
   }
   return false;
 }
@@ -652,7 +665,10 @@ static void on_vcpu_init(qemu_plugin_id_t id, unsigned int vcpu_index) {
     return;
   }
 
-  for (guint i = 0; i < registers->len && g.reg_count < MAX_REGS; i++) {
+  // Scan every register: the PC handle and the GP allowlist live at different
+  // positions per ISA (RISC-V exposes 32 GP regs before pc), so the GP table
+  // filling up must not stop us from finding pc.
+  for (guint i = 0; i < registers->len; i++) {
     qemu_plugin_reg_descriptor *desc =
         &g_array_index(registers, qemu_plugin_reg_descriptor, i);
     if (desc->name == NULL || desc->handle == NULL) {
@@ -661,7 +677,7 @@ static void on_vcpu_init(qemu_plugin_id_t id, unsigned int vcpu_index) {
     if (g.pc_handle == NULL && strcmp(desc->name, "pc") == 0) {
       g.pc_handle = desc->handle;
     }
-    if (!is_general_arm_reg(desc->name)) {
+    if (!gp_reg_allowed(desc->name) || g.reg_count >= MAX_REGS) {
       continue;
     }
     copy_str(g.regs[g.reg_count].name, sizeof(g.regs[g.reg_count].name),
@@ -719,6 +735,10 @@ static bool parse_manifest_line(char *line, Config *config) {
   }
   if (strcmp(key, "fault_domain") == 0) {
     copy_str(config->fault_domain, sizeof(config->fault_domain), value);
+    return true;
+  }
+  if (strcmp(key, "gp_regs") == 0) {
+    copy_str(config->gp_regs, sizeof(config->gp_regs), value);
     return true;
   }
   if (strcmp(key, "campaign_seed") == 0) {

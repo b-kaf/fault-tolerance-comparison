@@ -61,20 +61,24 @@ in
     zig build harness "''${@}"
 
     disassemble() {
-      name="$1"
-      elf="$2"
+      elf="$1"
+      name="$(basename "$elf" .elf)"
       out="$asm_dir/$name.s"
 
       echo "disassembling $elf -> $out"
       llvm-objdump -d --demangle --print-imm-hex "$elf" > "$out"
     }
 
-    disassemble tmr-c-m4 zig-out/harness/tmr-harness-c-m4.elf
-    disassemble tmr-zig-m4 zig-out/harness/tmr-harness-zig-m4.elf
-    disassemble checkpoint-c-m4 zig-out/harness/checkpoint-harness-c-m4.elf
-    disassemble checkpoint-zig-m4 zig-out/harness/checkpoint-harness-zig-m4.elf
-    disassemble recovery-block-zig-m4 zig-out/harness/recovery-block-harness-zig-m4.elf
-    disassemble recovery-block-c-m4 zig-out/harness/recovery-block-harness-c-m4.elf
+    shopt -s nullglob
+    elfs=(zig-out/harness/*.elf)
+    if [ "''${#elfs[@]}" -eq 0 ]; then
+      echo "no harness ELFs found in zig-out/harness" >&2
+      exit 1
+    fi
+
+    for elf in "''${elfs[@]}"; do
+      disassemble "$elf"
+    done
 
     echo "assembly output written to $asm_dir"
   '';

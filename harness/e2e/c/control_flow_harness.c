@@ -27,7 +27,7 @@ volatile uint32_t harness_last_transitions;
 volatile uint32_t harness_passes;
 volatile uint32_t harness_failures;
 volatile uint32_t harness_last_fault_target;
-volatile control_flow_monitor_t harness_c_control_flow_monitor;
+volatile control_flow_monitor_t harness_control_flow_monitor;
 
 static uint32_t pattern(uint32_t iteration) {
     return 100u + ((iteration * 41u) % 900u);
@@ -51,7 +51,7 @@ static void mirror_monitor(const control_flow_monitor_t *monitor) {
     harness_last_phase = monitor->phase;
     harness_last_signature = monitor->signature;
     harness_last_transitions = monitor->transitions;
-    harness_c_control_flow_monitor = *monitor;
+    harness_control_flow_monitor = *monitor;
 }
 
 static void apply_after_read_fault(control_flow_monitor_t *monitor) {

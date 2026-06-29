@@ -13,6 +13,7 @@ import (
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/config"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/e2e"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/fuzz"
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/target"
 )
 
 // Techniques and Languages are the accepted enum values, exposed so the TUI
@@ -20,6 +21,7 @@ import (
 var (
 	Techniques = []string{"tmr", "checkpoint", "recovery-block", "control-flow", "combined", "baseline"}
 	Languages  = []string{"c", "zig"}
+	Targets    = target.Names
 )
 
 // maxRunCount caps iterations/trials. These campaigns are slow (one QEMU run
@@ -44,9 +46,13 @@ func resolveCommon(technique, language string) error {
 
 // ResolveE2E validates inputs and fills config-derived defaults, returning a
 // runnable config.E2E. An empty iterations (0) means "use the config default".
-func ResolveE2E(repoRoot string, s config.Settings, technique, language, campaign string, iterations int, csvPath string) (config.E2E, error) {
+func ResolveE2E(repoRoot string, s config.Settings, technique, language, targetName, campaign string, iterations int, csvPath string) (config.E2E, error) {
 	var cfg config.E2E
 	if err := resolveCommon(technique, language); err != nil {
+		return cfg, err
+	}
+	profile, err := target.Get(targetName)
+	if err != nil {
 		return cfg, err
 	}
 	if campaign == "" {
@@ -68,7 +74,7 @@ func ResolveE2E(repoRoot string, s config.Settings, technique, language, campaig
 		return cfg, fmt.Errorf("iterations must be <= %d", maxRunCount)
 	}
 
-	elf := config.E2EElfPath(repoRoot, technique, language)
+	elf := config.E2EElfPath(repoRoot, technique, language, profile.ELFSuffix)
 	if _, err := os.Stat(elf); err != nil {
 		return cfg, fmt.Errorf("inferred ELF not found: %s (run `zig build harness` first)", elf)
 	}
@@ -86,15 +92,20 @@ func ResolveE2E(repoRoot string, s config.Settings, technique, language, campaig
 		Elf:                elf,
 		Host:               config.GdbHost,
 		Gdb:                config.Gdb,
+		Target:             profile,
 	}, nil
 }
 
 // ResolveFuzz validates inputs and fills config-derived defaults, returning a
 // runnable config.Fuzz. Empty trials (0) means "use the config default"; empty
 // seedText means "use the config default".
-func ResolveFuzz(repoRoot string, s config.Settings, technique, language, campaign string, trials int, seedText, csvPath string) (config.Fuzz, error) {
+func ResolveFuzz(repoRoot string, s config.Settings, technique, language, targetName, campaign string, trials int, seedText, csvPath string) (config.Fuzz, error) {
 	var cfg config.Fuzz
 	if err := resolveCommon(technique, language); err != nil {
+		return cfg, err
+	}
+	profile, err := target.Get(targetName)
+	if err != nil {
 		return cfg, err
 	}
 	if campaign == "" {
@@ -129,7 +140,7 @@ func ResolveFuzz(repoRoot string, s config.Settings, technique, language, campai
 		return cfg, fmt.Errorf("plugin not found: %s", plugin)
 	}
 
-	elf := config.FuzzElfPath(repoRoot, technique, language)
+	elf := config.FuzzElfPath(repoRoot, technique, language, profile.ELFSuffix)
 	if _, err := os.Stat(elf); err != nil {
 		return cfg, fmt.Errorf("inferred ELF not found: %s (run `zig build fuzz-harness` first)", elf)
 	}
@@ -145,5 +156,6 @@ func ResolveFuzz(repoRoot string, s config.Settings, technique, language, campai
 		MaxInstructions: s.Fuzz.MaxInstructions,
 		Plugin:          plugin,
 		Elf:             elf,
+		Target:          profile,
 	}, nil
 }

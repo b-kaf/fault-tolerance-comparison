@@ -33,14 +33,16 @@ func HarnessOutputDir(repoRoot string) string {
 	return filepath.Join(repoRoot, "zig-out", "harness")
 }
 
-// E2EElfPath infers the e2e harness ELF path from technique + language.
-func E2EElfPath(repoRoot, technique, language string) string {
-	name := fmt.Sprintf("%s-harness-%s-m4.elf", technique, language)
+// E2EElfPath infers the e2e harness ELF path from technique + language + target
+// suffix (e.g. "m4", "rv32"), matching build.zig's output naming.
+func E2EElfPath(repoRoot, technique, language, suffix string) string {
+	name := fmt.Sprintf("%s-harness-%s-%s.elf", technique, language, suffix)
 	return filepath.Join(HarnessOutputDir(repoRoot), name)
 }
 
-// FuzzElfPath infers the fuzz harness ELF path from technique + language.
-func FuzzElfPath(repoRoot, technique, language string) string {
-	name := fmt.Sprintf("%s-fuzz-harness-%s-m4.elf", technique, language)
+// FuzzElfPath infers the fuzz harness ELF path from technique + language + target
+// suffix (e.g. "m4", "rv32"), matching build.zig's output naming.
+func FuzzElfPath(repoRoot, technique, language, suffix string) string {
+	name := fmt.Sprintf("%s-fuzz-harness-%s-%s.elf", technique, language, suffix)
 	return filepath.Join(HarnessOutputDir(repoRoot), name)
 }

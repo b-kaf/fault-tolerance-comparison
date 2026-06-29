@@ -22,6 +22,7 @@ type Manifest struct {
 	FaultMode       string
 	FaultDomain     string
 	MaxInstructions uint64
+	GPRegisters     []string // register-fault allowlist (target GP registers)
 	EntryPC         uint64
 	TextStart       uint64
 	TextEnd         uint64
@@ -38,6 +39,7 @@ func WriteManifest(path string, m Manifest) error {
 		"fault_mode=" + m.FaultMode,
 		"fault_domain=" + m.FaultDomain,
 		fmt.Sprintf("max_instructions=%d", m.MaxInstructions),
+		"gp_regs=" + strings.Join(m.GPRegisters, ","),
 		fmt.Sprintf("entry_pc=0x%x", m.EntryPC),
 		fmt.Sprintf("text_start=0x%x", m.TextStart),
 		fmt.Sprintf("text_end=0x%x", m.TextEnd),

@@ -40,7 +40,7 @@ func (s Summary) Success() bool {
 func Run(ctx context.Context, cfg config.E2E, events Events) (Summary, []result.Row, error) {
 	var summary Summary
 
-	argv := append(qemu.BaseCommand(qemu.Binary, cfg.Elf),
+	argv := append(qemu.BaseCommand(cfg.Target, cfg.Elf),
 		"-S", "-gdb", fmt.Sprintf("tcp::%d", cfg.Port))
 	proc, err := qemu.Start(argv)
 	if err != nil {
@@ -59,6 +59,7 @@ func Run(ctx context.Context, cfg config.E2E, events Events) (Summary, []result.
 		Port:           cfg.Port,
 		ConnectTimeout: cfg.ConnectTimeout,
 		StopTimeout:    cfg.StopTimeout,
+		GdbArch:        cfg.Target.GdbArch,
 	})
 	if err != nil {
 		return summary, nil, err

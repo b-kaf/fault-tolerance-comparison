@@ -20,6 +20,7 @@ import (
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/fuzz"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/result"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/run"
+	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/target"
 	"github.com/b-kaf/fault-tolerance-comparison/harness/tui/internal/zigbuild"
 )
 
@@ -51,6 +52,7 @@ const (
 const (
 	fTechnique = iota
 	fLanguage
+	fTarget
 	fCampaign
 	fIterations
 	e2eFieldCount
@@ -60,6 +62,7 @@ const (
 const (
 	fzTechnique = iota
 	fzLanguage
+	fzTarget
 	fzCampaign
 	fzTrials
 	fzSeed
@@ -176,12 +179,14 @@ func newModel(repoRoot string, settings config.Settings) model {
 	m.e2eFields = []field{
 		fTechnique:  newSelect("Technique", run.Techniques, defaultTechnique),
 		fLanguage:   newSelect("Language", run.Languages, defaultLanguage),
+		fTarget:     newSelect("Target", run.Targets, target.Default),
 		fCampaign:   newSelect("Campaign", e2e.CampaignsForTechnique(defaultTechnique), "mixed"),
 		fIterations: newText("Iterations", fmt.Sprintf("%d", iterDefault)),
 	}
 	m.fuzzFields = []field{
 		fzTechnique: newSelect("Technique", run.Techniques, defaultTechnique),
 		fzLanguage:  newSelect("Language", run.Languages, defaultLanguage),
+		fzTarget:    newSelect("Target", run.Targets, target.Default),
 		fzCampaign:  newSelect("Campaign", fuzz.CampaignChoices, "reg-bitflip"),
 		fzTrials:    newText("Trials", fmt.Sprintf("%d", trialsDefault)),
 		fzSeed:      newText("Seed", seedDefault),
@@ -574,6 +579,7 @@ func (m model) startE2E() (tea.Model, tea.Cmd) {
 	cfg, err := run.ResolveE2E(m.repoRoot, m.settings,
 		m.e2eFields[fTechnique].value(),
 		m.e2eFields[fLanguage].value(),
+		m.e2eFields[fTarget].value(),
 		m.e2eFields[fCampaign].value(),
 		iterations,
 		"", // engine no longer writes; results are exported on demand
@@ -618,6 +624,7 @@ func (m model) startFuzz() (tea.Model, tea.Cmd) {
 	cfg, err := run.ResolveFuzz(m.repoRoot, m.settings,
 		m.fuzzFields[fzTechnique].value(),
 		m.fuzzFields[fzLanguage].value(),
+		m.fuzzFields[fzTarget].value(),
 		m.fuzzFields[fzCampaign].value(),
 		trials,
 		m.fuzzFields[fzSeed].value(),
