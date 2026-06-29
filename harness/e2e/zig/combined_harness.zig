@@ -55,9 +55,13 @@ export var harness_last_transitions: u32 = 0;
 export var harness_passes: u32 = 0;
 export var harness_failures: u32 = 0;
 
-// Snapshot of the TMR voter's saturating fault counter, used to tell a masked
-// (corrected) read apart from a clean one when classifying the outcome.
-var tmr_fault_count: u32 = 0;
+// Working state for the TMR vote and the recovery/checkpoint record. Both are
+// initialized before the injection point and operated on in place, so they are
+// memory-resident and corruptible exactly like the C harness's
+// `harness_combined_tmr` / `harness_combined_record`. The control-flow monitor
+// stays a local (as in C) since it is created fresh inside the workflow.
+export var harness_combined_tmr: TmrU32 = undefined;
+export var harness_combined_record: checkpoint.CheckpointedRecord = undefined;
 
 fn load(ptr: *const volatile u32) u32 {
     return ptr.*;
@@ -148,18 +152,16 @@ fn recordControl(status: control_flow.ControlStatus) bool {
     return status.passed();
 }
 
-// Runs the full protected workflow once and leaves the observed facts in the
-// harness_last_* globals. The outcome is computed by classifyOutcome.
-fn runWorkflow(input: u32) void {
+// Runs the full protected workflow once over the pre-initialized working state
+// and leaves the observed facts in the harness_last_* globals. The outcome is
+// computed by classifyOutcome.
+fn runWorkflow() void {
     var monitor = control_flow.Monitor.init();
-    var triplet = TmrU32.init(input);
-    var state = checkpoint.CheckpointedRecord.init(sampleRecord(input));
     var update = recovery_block.SampleUpdate{
         .sample = 0,
         .faults = recovery_block.sample_fault.none,
     };
 
-    tmr_fault_count = 0;
     mirrorMonitor(&monitor);
 
     // start -> read_input
@@ -171,14 +173,12 @@ fn runWorkflow(input: u32) void {
     // read_input: TMR vote (faults applied to the triplet first).
     store(&harness_stage, abi.stage.after_control_read);
     applyControlFault(&monitor);
-    applyTmrFault(&triplet);
-    const voted = triplet.read() catch {
+    applyTmrFault(&harness_combined_tmr);
+    const voted = harness_combined_tmr.read() catch {
         store(&harness_last_tmr_status, abi.status.no_majority);
-        tmr_fault_count = triplet.fault_count;
         return; // no majority -> safe stop
     };
     store(&harness_last_tmr_status, abi.status.ok);
-    tmr_fault_count = triplet.fault_count;
     update.sample = voted;
 
     // read_input -> compute
@@ -190,7 +190,7 @@ fn runWorkflow(input: u32) void {
     // compute: recovery block over the voted sample.
     store(&harness_stage, abi.stage.after_control_compute);
     const recovery = recovery_block.runWithHooks(
-        &state,
+        &harness_combined_record,
         &update,
         recovery_block.samplePrimary,
         applyAfterPrimaryFault,
@@ -201,7 +201,7 @@ fn runWorkflow(input: u32) void {
     store(&harness_last_checkpoint_check, recovery.checkpoint_check.code());
     store(&harness_last_active_check, recovery.primary_check.code());
     if (recovery.status != .primary_accepted and recovery.status != .alternate_accepted) {
-        store(&harness_last_value, state.active.value);
+        store(&harness_last_value, harness_combined_record.active.value);
         return; // unrecoverable -> safe stop (restored to last good)
     }
 
@@ -212,7 +212,7 @@ fn runWorkflow(input: u32) void {
     }
 
     // validate: checker acceptance gate.
-    store(&harness_last_active_check, state.active.validate().code());
+    store(&harness_last_active_check, harness_combined_record.active.validate().code());
 
     // validate -> commit
     if (!recordControl(monitor.advance(.validate, .commit))) {
@@ -221,12 +221,12 @@ fn runWorkflow(input: u32) void {
     }
 
     // commit: checkpoint commit-or-restart (faults applied just before).
-    applyCommitFault(&state);
-    const commit = state.commitOrRestart();
+    applyCommitFault(&harness_combined_record);
+    const commit = harness_combined_record.commitOrRestart();
     store(&harness_last_restart_status, commit.status.code());
     store(&harness_last_active_check, commit.active_check.code());
     store(&harness_last_checkpoint_check, commit.checkpoint_check.code());
-    store(&harness_last_value, state.active.value);
+    store(&harness_last_value, harness_combined_record.active.value);
     if (commit.status == .restore_failed) {
         return; // both copies bad -> safe stop
     }
@@ -249,7 +249,7 @@ fn classifyOutcome(expected: u32) u32 {
     const corrected =
         load(&harness_last_recovery_status) == abi.recovery.alternate_accepted or
         load(&harness_last_restart_status) == abi.restart.restored or
-        tmr_fault_count != 0;
+        harness_combined_tmr.fault_count != 0;
 
     const recovery_status = load(&harness_last_recovery_status);
     if (load(&harness_last_control_status) != abi.control.ok or
@@ -303,12 +303,14 @@ export fn harness_main() callconv(.c) noreturn {
         store(&harness_last_phase, @intFromEnum(control_flow.Phase.start));
         store(&harness_last_transitions, 0);
         store(&harness_last_fault_target, abi.fault.none);
+        harness_combined_tmr = TmrU32.init(input);
+        harness_combined_record = checkpoint.CheckpointedRecord.init(sampleRecord(input));
 
         store(&harness_stage, abi.stage.before_workflow);
         @call(.never_inline, harness_injection_point_before_workflow, .{});
 
         store(&harness_last_fault_target, load(&harness_fault_target));
-        runWorkflow(input);
+        runWorkflow();
         store(&harness_fault_target, abi.fault.none);
 
         store(&harness_last_outcome, classifyOutcome(expected));

@@ -62,8 +62,8 @@ volatile uint32_t harness_last_phase;
 volatile uint32_t harness_last_transitions;
 volatile uint32_t harness_passes;
 volatile uint32_t harness_failures;
-volatile tmr_int_t harness_c_combined_tmr;
-volatile checkpoint_record_t harness_c_combined_record;
+volatile tmr_int_t harness_combined_tmr;
+volatile checkpoint_record_t harness_combined_record;
 
 static uint32_t sample_input(uint32_t iteration) {
     return 100u + ((iteration * 41u) % 700u);
@@ -180,8 +180,8 @@ static int record_control(control_flow_status_t status) {
 static void run_workflow(uint32_t iteration) {
     control_flow_monitor_t monitor = control_flow_monitor_init();
     checkpoint_record_t *record =
-        (checkpoint_record_t *)&harness_c_combined_record;
-    tmr_int_t *triplet = (tmr_int_t *)&harness_c_combined_tmr;
+        (checkpoint_record_t *)&harness_combined_record;
+    tmr_int_t *triplet = (tmr_int_t *)&harness_combined_tmr;
     recovery_block_sample_update_t update;
     recovery_block_result_t recovery;
     checkpoint_restart_result_t commit;
@@ -291,7 +291,7 @@ static uint32_t classify_outcome(uint32_t expected) {
     const uint32_t corrected =
         harness_last_recovery_status == HARNESS_RECOVERY_ALTERNATE_ACCEPTED ||
         harness_last_restart_status == HARNESS_RESTART_RESTORED ||
-        harness_c_combined_tmr.fault_count != 0u;
+        harness_combined_tmr.fault_count != 0u;
 
     /* A detected error that stopped the workflow before commit is fail-safe. */
     if (harness_last_control_status != HARNESS_CONTROL_OK ||
@@ -347,8 +347,8 @@ void harness_main(void) {
         harness_last_phase = CONTROL_FLOW_PHASE_START;
         harness_last_transitions = 0u;
         harness_last_fault_target = HARNESS_FAULT_NONE;
-        harness_c_combined_tmr = tmr_int_init((int)input);
-        harness_c_combined_record = checkpoint_record_init(sample_record(input));
+        harness_combined_tmr = tmr_int_init((int)input);
+        harness_combined_record = checkpoint_record_init(sample_record(input));
 
         harness_stage = HARNESS_STAGE_BEFORE_WORKFLOW;
         harness_injection_point_before_workflow();

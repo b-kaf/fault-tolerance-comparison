@@ -26,7 +26,7 @@ volatile uint32_t harness_last_checkpoint_value;
 volatile uint32_t harness_passes;
 volatile uint32_t harness_failures;
 volatile uint32_t harness_last_fault_target;
-volatile checkpoint_record_t harness_c_checkpoint_state;
+volatile checkpoint_record_t harness_checkpoint_state;
 
 static uint32_t sample_initial_value(uint32_t iteration) {
     return 100u + ((iteration * 37u) % 700u);
@@ -58,7 +58,7 @@ void harness_injection_point_after_commit(void) {
 
 static void mirror_state(void) {
     const checkpoint_record_t *state =
-        (const checkpoint_record_t *)&harness_c_checkpoint_state;
+        (const checkpoint_record_t *)&harness_checkpoint_state;
     harness_last_active_value = state->active.value;
     harness_last_checkpoint_value = state->checkpoint.value;
 }
@@ -66,7 +66,7 @@ static void mirror_state(void) {
 static void apply_pending_fault(void) {
     const uint32_t target = harness_fault_target;
     const uint32_t value = harness_fault_value;
-    checkpoint_record_t *state = (checkpoint_record_t *)&harness_c_checkpoint_state;
+    checkpoint_record_t *state = (checkpoint_record_t *)&harness_checkpoint_state;
 
     harness_last_fault_target = target;
 
@@ -183,14 +183,14 @@ void harness_main(void) {
         harness_last_active_check = CHECKER_OK;
         harness_last_checkpoint_check = CHECKER_OK;
         harness_last_fault_target = HARNESS_FAULT_NONE;
-        harness_c_checkpoint_state = checkpoint_record_init(record);
+        harness_checkpoint_state = checkpoint_record_init(record);
 
         harness_stage = HARNESS_STAGE_AFTER_CHECKPOINT;
-        checkpoint_record_capture((checkpoint_record_t *)&harness_c_checkpoint_state);
+        checkpoint_record_capture((checkpoint_record_t *)&harness_checkpoint_state);
 
-        ((checkpoint_record_t *)&harness_c_checkpoint_state)->active.value = expected;
+        ((checkpoint_record_t *)&harness_checkpoint_state)->active.value = expected;
         checker_record_refresh_checksum(
-            &((checkpoint_record_t *)&harness_c_checkpoint_state)->active);
+            &((checkpoint_record_t *)&harness_checkpoint_state)->active);
         mirror_state();
 
         harness_stage = HARNESS_STAGE_AFTER_MUTATION;
@@ -200,7 +200,7 @@ void harness_main(void) {
 
         harness_stage = HARNESS_STAGE_BEFORE_COMMIT;
         result = checkpoint_record_commit_or_restart(
-            (checkpoint_record_t *)&harness_c_checkpoint_state);
+            (checkpoint_record_t *)&harness_checkpoint_state);
 
         harness_last_restart_status = result.status;
         harness_last_active_check = result.active_check;

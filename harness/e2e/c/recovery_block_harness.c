@@ -32,7 +32,7 @@ volatile uint32_t harness_last_checkpoint_value;
 volatile uint32_t harness_passes;
 volatile uint32_t harness_failures;
 volatile uint32_t harness_last_fault_target;
-volatile checkpoint_record_t harness_c_recovery_block_state;
+volatile checkpoint_record_t harness_recovery_block_state;
 
 static uint32_t sample_initial_value(uint32_t iteration) {
     return 100u + ((iteration * 29u) % 700u);
@@ -60,7 +60,7 @@ void harness_injection_point_after_recovery(void) {
 
 static void mirror_state(void) {
     const checkpoint_record_t *state =
-        (const checkpoint_record_t *)&harness_c_recovery_block_state;
+        (const checkpoint_record_t *)&harness_recovery_block_state;
     harness_last_active_value = state->active.value;
     harness_last_checkpoint_value = state->checkpoint.value;
 }
@@ -217,7 +217,7 @@ void harness_main(void) {
         harness_last_restore_check = CHECKER_OK;
         harness_last_alternate_check = CHECKER_OK;
         harness_last_fault_target = HARNESS_FAULT_NONE;
-        harness_c_recovery_block_state = checkpoint_record_init(record);
+        harness_recovery_block_state = checkpoint_record_init(record);
         mirror_state();
 
         harness_stage = HARNESS_STAGE_BEFORE_RECOVERY;
@@ -225,7 +225,7 @@ void harness_main(void) {
 
         harness_last_fault_target = harness_fault_target;
         result = recovery_block_run_with_hooks(
-            (checkpoint_record_t *)&harness_c_recovery_block_state,
+            (checkpoint_record_t *)&harness_recovery_block_state,
             recovery_block_sample_primary,
             apply_after_primary_fault,
             recovery_block_sample_alternate,

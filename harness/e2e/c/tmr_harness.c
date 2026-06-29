@@ -18,7 +18,7 @@ volatile uint32_t harness_last_status;
 volatile uint32_t harness_passes;
 volatile uint32_t harness_failures;
 volatile uint32_t harness_last_fault_target;
-volatile tmr_int_t harness_c_tmr_state;
+volatile tmr_int_t harness_tmr_state;
 
 static uint32_t pattern(uint32_t iteration) {
     return 0x5a5a0000u ^ (iteration * 2654435761u);
@@ -42,11 +42,11 @@ static void apply_pending_fault(void) {
 
     switch (target) {
     case HARNESS_FAULT_COPY_A:
-        tmr_int_inject_fault_a((tmr_int_t *)&harness_c_tmr_state, value);
+        tmr_int_inject_fault_a((tmr_int_t *)&harness_tmr_state, value);
         break;
     case HARNESS_FAULT_ALL_DISTINCT:
         tmr_int_inject_all(
-            (tmr_int_t *)&harness_c_tmr_state,
+            (tmr_int_t *)&harness_tmr_state,
             value,
             value ^ 0x11111111,
             value ^ 0x22222222);
@@ -92,7 +92,7 @@ void harness_main(void) {
         harness_last_value = 0;
         harness_last_status = HARNESS_STATUS_OK;
         harness_last_fault_target = HARNESS_FAULT_NONE;
-        harness_c_tmr_state = tmr_int_init((int)expected);
+        harness_tmr_state = tmr_int_init((int)expected);
 
         harness_stage = HARNESS_STAGE_AFTER_INIT;
         harness_injection_point_after_init();
@@ -100,7 +100,7 @@ void harness_main(void) {
         apply_pending_fault();
 
         harness_stage = HARNESS_STAGE_BEFORE_READ;
-        status = tmr_int_read((tmr_int_t *)&harness_c_tmr_state, &value);
+        status = tmr_int_read((tmr_int_t *)&harness_tmr_state, &value);
 
         harness_last_value = (uint32_t)value;
         harness_last_status = status == TMR_OK

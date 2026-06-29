@@ -24,9 +24,12 @@ export var harness_last_transitions: u32 = 0;
 export var harness_passes: u32 = 0;
 export var harness_failures: u32 = 0;
 export var harness_last_fault_target: u32 = 0;
-export var harness_zig_control_flow_phase: u32 = 0;
-export var harness_zig_control_flow_signature: u32 = 0;
-export var harness_zig_control_flow_transitions: u32 = 0;
+
+// Working control-flow monitor mirror. The live monitor is a local in
+// harness_main (as in the C harness); this single contiguous struct is the
+// write-only mirror the tooling can observe, replacing the former scattered
+// phase/signature/transitions scalars.
+export var harness_control_flow_monitor: control_flow.Monitor = undefined;
 
 fn load(ptr: *const volatile u32) u32 {
     return ptr.*;
@@ -52,21 +55,11 @@ export fn harness_injection_point_after_control_flow() callconv(.c) void {
     asm volatile ("nop // injection_point_after_control_flow");
 }
 
-fn loadMonitor() control_flow.Monitor {
-    return .{
-        .phase = load(&harness_zig_control_flow_phase),
-        .signature = load(&harness_zig_control_flow_signature),
-        .transitions = load(&harness_zig_control_flow_transitions),
-    };
-}
-
 fn mirrorMonitor(monitor: *const control_flow.Monitor) void {
     store(&harness_last_phase, monitor.phase);
     store(&harness_last_signature, monitor.signature);
     store(&harness_last_transitions, monitor.transitions);
-    store(&harness_zig_control_flow_phase, monitor.phase);
-    store(&harness_zig_control_flow_signature, monitor.signature);
-    store(&harness_zig_control_flow_transitions, monitor.transitions);
+    harness_control_flow_monitor = monitor.*;
 }
 
 fn applyAfterReadFault(monitor: *control_flow.Monitor) void {
@@ -249,7 +242,6 @@ export fn harness_main() callconv(.c) noreturn {
         store(&harness_stage, abi.stage.before_control_flow);
         @call(.never_inline, harness_injection_point_before_control_flow, .{});
 
-        monitor = loadMonitor();
         store(&harness_last_fault_target, load(&harness_fault_target));
         runControlFlow(input, &monitor);
         store(&harness_fault_target, abi.fault.none);

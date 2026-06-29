@@ -14,10 +14,13 @@ export var harness_last_status: u32 = 0;
 export var harness_passes: u32 = 0;
 export var harness_failures: u32 = 0;
 export var harness_last_fault_target: u32 = 0;
-export var harness_zig_tmr_a: u32 = 0;
-export var harness_zig_tmr_b: u32 = 0;
-export var harness_zig_tmr_c: u32 = 0;
-export var harness_zig_tmr_fault_count: u32 = 0;
+
+// Working TMR triplet. Held in a single contiguous struct (not scattered
+// scalars) so it is memory-resident at the injection point and corruptible
+// exactly like the C harness's `harness_tmr_state`. The algorithm runs in
+// place on it; the never_inline injection call forces a reload afterwards, so
+// a fault landing here propagates into the vote.
+export var harness_tmr_state: TmrU32 = undefined;
 
 fn load(ptr: *const volatile u32) u32 {
     return ptr.*;
@@ -27,24 +30,8 @@ fn store(ptr: *volatile u32, value: u32) void {
     ptr.* = value;
 }
 
-fn loadState() TmrU32 {
-    return .{
-        .a = load(&harness_zig_tmr_a),
-        .b = load(&harness_zig_tmr_b),
-        .c = load(&harness_zig_tmr_c),
-        .fault_count = load(&harness_zig_tmr_fault_count),
-    };
-}
-
 fn pattern(iteration: u32) u32 {
     return 0x5a5a0000 ^ (iteration *% 2654435761);
-}
-
-fn mirrorState(state: *const TmrU32) void {
-    store(&harness_zig_tmr_a, state.a);
-    store(&harness_zig_tmr_b, state.b);
-    store(&harness_zig_tmr_c, state.c);
-    store(&harness_zig_tmr_fault_count, state.fault_count);
 }
 
 export fn harness_injection_point_after_init() callconv(.c) void {
@@ -72,7 +59,6 @@ fn applyPendingFault(state: *TmrU32) void {
     }
 
     store(&harness_fault_target, abi.fault.none);
-    mirrorState(state);
 }
 
 fn validate(expected: u32, tmr_status: u32, value: u32) void {
@@ -101,23 +87,21 @@ export fn harness_main() callconv(.c) noreturn {
     while (true) {
         const iteration = load(&harness_iteration) +% 1;
         const expected = pattern(iteration);
-        var state = TmrU32.init(expected);
 
         store(&harness_iteration, iteration);
         store(&harness_last_expected, expected);
         store(&harness_last_value, 0);
         store(&harness_last_status, abi.status.ok);
         store(&harness_last_fault_target, abi.fault.none);
-        mirrorState(&state);
+        harness_tmr_state = TmrU32.init(expected);
 
         store(&harness_stage, abi.stage.after_init);
         @call(.never_inline, harness_injection_point_after_init, .{});
 
-        state = loadState();
-        applyPendingFault(&state);
+        applyPendingFault(&harness_tmr_state);
 
         store(&harness_stage, abi.stage.before_read);
-        if (state.read()) |value| {
+        if (harness_tmr_state.read()) |value| {
             store(&harness_last_value, value);
             store(&harness_last_status, abi.status.ok);
         } else |err| switch (err) {
@@ -125,7 +109,6 @@ export fn harness_main() callconv(.c) noreturn {
                 store(&harness_last_status, abi.status.no_majority);
             },
         }
-        mirrorState(&state);
 
         store(&harness_stage, abi.stage.after_read);
         validate(expected, load(&harness_last_status), load(&harness_last_value));
